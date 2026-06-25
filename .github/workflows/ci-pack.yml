@@ -29,10 +29,10 @@ jobs:
           set -euo pipefail
           case "${{ matrix.arch }}" in
             arm64)
-              echo "archive_url=https://github.com/AdguardTeam/AdGuardHome/releases/v0.108.0-b.88/download/AdGuardHome_linux_arm64.tar.gz" >> "$GITHUB_OUTPUT"
+              echo "archive_url=https://github.com/AdguardTeam/AdGuardHome/releases/download/v0.108.0-b.88/AdGuardHome_linux_arm64.tar.gz" >> "$GITHUB_OUTPUT"
               ;;
             armv7)
-              echo "archive_url=https://github.com/AdguardTeam/AdGuardHome/releases/v0.108.0-b.88/download/AdGuardHome_linux_armv7.tar.gz" >> "$GITHUB_OUTPUT"
+              echo "archive_url=https://github.com/AdguardTeam/AdGuardHome/releases/download/v0.108.0-b.88/AdGuardHome_linux_armv7.tar.gz" >> "$GITHUB_OUTPUT"
               ;;
             *)
               echo "Unsupported arch: ${{ matrix.arch }}" >&2
