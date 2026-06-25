@@ -1,4 +1,4 @@
-name: Pack AdGuardHomeForRootMod
+name: 正式版
 
 on:
   workflow_dispatch:

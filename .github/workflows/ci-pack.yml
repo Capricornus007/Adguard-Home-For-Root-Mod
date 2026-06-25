@@ -1,4 +1,4 @@
-name: Pack AdGuardHomeForRootMod Preview
+name: 測試版
 
 on:
   workflow_dispatch:
