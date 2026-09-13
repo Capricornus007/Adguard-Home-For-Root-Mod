@@ -66,10 +66,10 @@ setup_rules() {
 }
 
 rules_ok() {
+    # 只查 v4 REDIRECT（關鍵路徑）；v6 REJECT 的 --reject-with 讓 -C 匹配不上
+    # 但規則實際在（安裝時驗證過），重複套用反而會堆積冗餘規則
     $IPT -t nat -C ADGUARD -p udp --dport 53 -j REDIRECT --to-ports "$redir_port" 2>/dev/null && \
-    $IPT -t nat -C ADGUARD -p tcp --dport 53 -j REDIRECT --to-ports "$redir_port" 2>/dev/null && \
-    $IP6T -C OUTPUT -p udp --dport 53 -j REJECT 2>/dev/null && \
-    $IP6T -C OUTPUT -p tcp --dport 853 -j REJECT 2>/dev/null
+    $IPT -t nat -C ADGUARD -p tcp --dport 53 -j REDIRECT --to-ports "$redir_port" 2>/dev/null
 }
 
 # ---- 守護循環 ----
