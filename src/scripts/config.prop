@@ -1,10 +1,15 @@
 #注：以下所有开关项修改后必须重启生效
-# AdGuardHome 运行用户和用户组
+# AdGuardHome 运行用户和用户组（豁免劫持，只有 AGH 自己的进程匹配）
 adg_user="root"
 adg_group="net_raw"
 
 # AdGuardHome DNS 重定向端口
 redir_port=5591
+
+# 劫持豁免的目的地址列表（空格分隔）
+# 填入 VPN 的 tun DNS 地址（如 172.19.0.2）可讓 fake-ip 模式繼續工作
+# 但默認劫持一切＝所有 DNS 都經 AGH 過濾（推薦，去廣告效果最完整）
+ignore_dest_list=""
 
 # 代理订阅链接（在引号内填入你的订阅）
 PROXY_URL=" "

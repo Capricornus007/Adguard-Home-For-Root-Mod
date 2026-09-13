@@ -126,6 +126,14 @@ statistics:
   ignored_enabled: false
 filters:
   - enabled: true
+    url: https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/fakenews-gambling/hosts
+    name: StevenBlack's Unified hosts + fakenews + gambling
+    id: 1795500001
+  - enabled: true
+    url: https://divested.dev/hosts
+    name: Divested Hosts
+    id: 1795500002
+  - enabled: true
     url: https://raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/dns.txt
     name: GOODBYEADS
     id: 1721861846
@@ -191,6 +199,8 @@ whitelist_filters:
     name: ok
     id: 1748752400
 user_rules:
+  - '||fonts.googleapis.com^$important'
+  - '||fonts.gstatic.com^$important'
   - '#针对转转App的放行规则，勿删'
   - '@@||zhuanzhuan.com^$important'
   - '#针对天猫校园的拦截规则，勿删'
