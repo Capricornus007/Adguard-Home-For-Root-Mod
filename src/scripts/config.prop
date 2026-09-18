@@ -1,5 +1,6 @@
 #注：以下所有开关项修改后必须重启生效
-# AdGuardHome 运行用户和用户组（豁免劫持，只有 AGH 自己的进程匹配）
+# AdGuardHome 运行用户和用户组（adg_group 已不再参与劫持豁免匹配，保留仅为兼容旧配置：
+# chown root:net_raw 改的是文件所属组，不改变进程的有效 gid，服务由 root 启动时 egid=0）
 adg_user="root"
 adg_group="net_raw"
 
@@ -7,9 +8,14 @@ adg_group="net_raw"
 redir_port=5591
 
 # 劫持豁免的目的地址列表（空格分隔）
+# 这些地址＝「AGH 自己当上游用的 DNS 服务器」。写在这里的意思是：发往它们的 53 端口
+# 流量直接放行、不再被 REDIRECT 回 AGH 自己的监听端口。不写会怎样：AGH 查上游等于问自己，
+# 自己再问自己，形成自我劫持死锁，表现为整个手机 DNS 无应答（DoH 上游一断就全线卡死）。
 # 填入 VPN 的 tun DNS 地址（如 172.19.0.2）可讓 fake-ip 模式繼續工作
-# 但默認劫持一切＝所有 DNS 都經 AGH 過濾（推薦，去廣告效果最完整）
-ignore_dest_list=""
+# 默認劫持一切＝其餘所有 DNS 都經 AGH 過濾（去廣告效果最完整）
+# 下面這組預設值對應本模組內建 AdGuardHome.yaml 的 bootstrap_dns／建議的 fallback_dns，
+# 換了上游伺服器就要同步改這裡，否則新上游的 53 端口查詢又會被劫持回來。
+ignore_dest_list="180.184.1.1 180.184.2.2 8.8.8.8 119.29.29.29 223.5.5.5 1.1.1.1"
 
 # 代理订阅链接（在引号内填入你的订阅）
 PROXY_URL=" "
