@@ -7,7 +7,7 @@ MAIN_LOG="$AGH_DIR/agh.log"
 MODULES_DIR="/data/adb/modules"
 AGH_MODULE_PROP="/data/adb/modules/AdGuardHome/module.prop"
 
-# 解锁脚本防篡改保护
+# 解锁旧安装的脚本防篡改保护（升级兼容：历史上的 +i 标记要能清掉）
 find "$ADGPATH" -type f -name "*.sh" -exec chattr -i {} \;
 
 # 系统语言检测
@@ -37,8 +37,11 @@ if [ "$found_hosts" = true ]; then
 fi
 
 # 启动AdGuardHome
+# -w 必须显式指定：本脚本由管理器以任意 cwd 调用，AdGuardHome 的 workdir 会跟着
+# cwd 走，找不到 bin/data/AdGuardHome.yaml 就会进「首次安装向导」模式并因 3000 端口
+# 被占而 panic 退出，守护循环再把它拉起 → 反复重启+每次开关飞行模式。
 export SSL_CERT_DIR="/system/etc/security/cacerts/"
-"$BIN_DIR/AdGuardHome" --no-check-update &
+"$BIN_DIR/AdGuardHome" --no-check-update -w "$BIN_DIR/data" &
 
 # 验证AdGuardHome是否启动成功
 sleep 1
@@ -55,8 +58,8 @@ fi
 "$SCRIPT_DIR/NoAdsService.sh" &
 "$SCRIPT_DIR/ProxyConfig.sh" &
 
-# 执行脚本防篡改保护
-find "$ADGPATH" -type f -name "*.sh" -exec chattr +i {} \;
+# 不再给脚本重新加 chattr +i：防篡改标记会让后续修复（改端口、改启动参数）
+# 必须先解一次锁才能写，实际只给维护添堵，防不住真正想改的人（root 随时 chattr -i）。
 
 # 日志超限时清空
 [ $(stat -c %s "$MAIN_LOG" || ls -l "$MAIN_LOG" | awk '{print $5}') -ge 102400 ] && : > "$MAIN_LOG"

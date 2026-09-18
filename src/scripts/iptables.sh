@@ -2,7 +2,7 @@
 # 攔截層：v4 DNS 劫持進 AGH、v6 DNS 明確拒絕（REJECT 而非 DROP——drop 讓解析器
 # 等滿超時才回退 v4，表現為「連了網沒 Internet」的隨機卡頓；reject 立即回退，
 # twoone-3 issue #71 的教訓）、DoT(853) 阻斷（防系統私下繞過 AGH 走加密 DNS）。
-# 免死金牌只給 AGH 進程自己（root:net_raw）——它的上游查詢不能被劫持回自己。
+# 免死金牌只給 AGH 進程自己（按 uid 認 root）——它的上游查詢不能被劫持回自己。
 # 帶 5 秒守護循環：進程掉了重啟、規則被刷掉了重建（VPN 啟停會沖掉 nat 規則）。
 AGH_DIR="/data/adb/agh"
 . "$AGH_DIR/scripts/config.prop" 2>/dev/null || {
@@ -20,11 +20,11 @@ log() { echo "$(date '+%F %T') [iptables] $1" >> "$MAIN_LOG"; }
 [ "$(pgrep -f "$0" | wc -l)" -gt 1 ] && exit
 
 setup_rules() {
-    # AGH 掉進程則先拉起
+    # AGH 掉進程則先拉起（-w 固定 workdir，否則它會跟著 cwd 跑進「首次安裝向導」狀態）
     pgrep -x AdGuardHome >/dev/null || {
         log "AdGuardHome 進程丟失，重啟..."
         export SSL_CERT_DIR="/system/etc/security/cacerts/"
-        "$AGH_DIR/bin/AdGuardHome" --no-check-update &
+        "$AGH_DIR/bin/AdGuardHome" --no-check-update -w "$AGH_DIR/bin/data" &
     }
 
     # ---- v4：nat OUTPUT 劫持 53 → AGH ----
@@ -33,8 +33,12 @@ setup_rules() {
         $IPT -t nat -I OUTPUT -j ADGUARD
     }
     $IPT -t nat -F ADGUARD
-    # AGH 自身豁免（uid+gid 同時匹配，只放 AGH 進程）
-    $IPT -t nat -A ADGUARD -m owner --uid-owner "$adg_user" --gid-owner "$adg_group" -j RETURN
+    # AGH 自身豁免：只認 uid（root）。
+    # 原設計還要求 --gid-owner net_raw，但 customize.sh 的 chown root:net_raw
+    # 改的是「二進制的文件所屬組」，不改變進程的有效 gid —— 服務由 root 啟動時 egid=0，
+    # 這條永遠匹配不上，於是 AGH 自己發往 53 埠的上游查詢（bootstrap_dns / fallback_dns）
+    # 被 REDIRECT 打回它自己的 5591，形成自我劫持死鎖：DoH 上游一斷，全機 DNS 跟著癱。
+    $IPT -t nat -A ADGUARD -m owner --uid-owner "$adg_user" -j RETURN
     # 額外目的地址豁免（config.prop 的 ignore_dest_list，空格分隔）
     [ -n "$ignore_dest_list" ] && for d in $ignore_dest_list; do
         $IPT -t nat -A ADGUARD -d "$d" -j RETURN 2>/dev/null

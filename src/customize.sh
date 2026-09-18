@@ -93,9 +93,10 @@ chmod +x "$BIN_DIR/AdGuardHome"
 chmod +x "$SCRIPT_DIR"/*.sh
 chown root:net_raw "$BIN_DIR/AdGuardHome"
 
-# 执行脚本防篡改保护
-i18n_print "- Locking script files" "- 正在锁定脚本文件"
-find "$SCRIPT_DIR" -type f -name "*.sh" -exec chattr +i {} \;
+# 不再给脚本加 chattr +i 防篡改锁：
+# 1) 它挡不住任何有 root 的人（一条 chattr -i 就开），只是给后续维护/修复添堵；
+# 2) 手机上直接改配置（端口、启动参数）时会写出 Permission denied 假象，排查成本极高。
+# 安装时仍保留上面对旧安装的解锁步骤，确保从历史版本升级能覆盖。
 
 # 正在保留配置文件
 if [ -f "$BACKUP_DIR/config.prop" ]; then
