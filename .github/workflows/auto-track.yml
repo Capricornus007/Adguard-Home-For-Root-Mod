@@ -125,7 +125,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: plan
+    needs: [plan, package]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -156,7 +156,7 @@ jobs:
           name: "自動最新版（${{ matrix.channel }}）"
           target_commitish: ${{ github.sha }}
           prerelease: ${{ matrix.channel == 'edge' }}
-          overwrite: true
+          overwrite_files: true
           make_latest: ${{ matrix.channel == 'stable' && 'true' || 'false' }}
           files: |
             out/AdGuardHomeForRoot_${{ matrix.channel }}_arm64.zip
