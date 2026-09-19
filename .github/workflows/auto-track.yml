@@ -1,0 +1,172 @@
+name: 自動追最新核心
+
+# 用戶需求（2026-09-19）：給模組加「自動構建 + 直接追最新版 AdGuardHome 核心 +
+# 自動打包進模組 zip」。採「追官方 release 二進制」而非「源碼直出」：AdGuardHome 源碼
+# 含 webui（npm）前端構建鏈，官方 release 已是編譯好的 linux_arm64/armv7 靜態二進制，
+# 追它更可靠、也不需要在本 CI 重現上游構建。要源碼直出請另議。
+#
+# 雙通道，各自滾動發佈到固定 tag（內容＝當前 HEAD 的 src + 該通道最新核心）：
+#   auto-stable → AdGuardHome 最新「穩定版」（releases/latest）
+#   auto-edge   → AdGuardHome 最新「beta/edge」（最新一個 prerelease，形如 v0.108.0-b.NN）
+# 與手動的 正式版(pack.yml)/測試版(ci-pack.yml) 日期 tag 互不干擾。
+#
+# 滾動策略：每次排程一律重建並覆寫同 tag 的資產，不做「核心是否變」比對——這樣核心更新
+# 或 src 腳本更新，隔天都會帶上。全程用內建 github.token 走 gh api（匿名 60/hr 會限流）。
+#
+# 安全：上游 release tag 與 dispatch 輸入都屬不可信字串，一律經 env 傳入、加正則校驗、
+# 並在 shell 裡加引號使用，不把它們直接拼進命令。
+
+on:
+  schedule:
+    - cron: '30 12 * * *'        # 每日 12:30 UTC
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: '重建哪些通道'
+        type: choice
+        default: both
+        options: [both, stable, edge]
+
+permissions:
+  contents: write
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      stable_tag: ${{ steps.resolve.outputs.stable_tag }}
+      edge_tag: ${{ steps.resolve.outputs.edge_tag }}
+      want_stable: ${{ steps.scope.outputs.want_stable }}
+      want_edge: ${{ steps.scope.outputs.want_edge }}
+    steps:
+      - name: Resolve AdGuardHome core versions
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          verre='^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9._-]+)?$'
+          stable="$(gh api repos/AdguardTeam/AdGuardHome/releases/latest --jq .tag_name)"
+          edge="$(gh api 'repos/AdguardTeam/AdGuardHome/releases?per_page=30' \
+                  --jq '[.[] | select(.prerelease)][0].tag_name')"
+          # 只放行正經版本號，防止異常 tag 帶入命令注入 / 壞 URL
+          printf '%s' "$stable" | grep -Eq "$verre" || { echo "::error::非法 stable tag: $stable"; exit 1; }
+          printf '%s' "$edge"   | grep -Eq "$verre" || { echo "::error::非法 edge tag: $edge"; exit 1; }
+          echo "stable=$stable  edge=$edge"
+          echo "stable_tag=$stable" >> "$GITHUB_OUTPUT"
+          echo "edge_tag=$edge" >> "$GITHUB_OUTPUT"
+
+      - name: Compute requested scope
+        id: scope
+        env:
+          WANT: ${{ github.event.inputs.channel }}
+        run: |
+          set -euo pipefail
+          case "${WANT:-both}" in
+            both)   ws=true;  we=true  ;;
+            stable) ws=true;  we=false ;;
+            edge)   ws=false; we=true  ;;
+            *)      echo "::error::未知 channel: $WANT"; exit 1 ;;
+          esac
+          echo "want_stable=$ws" >> "$GITHUB_OUTPUT"
+          echo "want_edge=$we" >> "$GITHUB_OUTPUT"
+
+  package:
+    needs: plan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        channel: [stable, edge]
+        arch: [arm64, armv7]
+    env:
+      CORE: ${{ matrix.channel == 'stable' && needs.plan.outputs.stable_tag || needs.plan.outputs.edge_tag }}
+      WANTED: ${{ matrix.channel == 'stable' && needs.plan.outputs.want_stable || needs.plan.outputs.want_edge }}
+    steps:
+      - name: Skip if this channel not requested
+        id: go
+        run: echo "run=${WANTED}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v5
+        if: steps.go.outputs.run == 'true'
+
+      - name: Download AdGuardHome binary for ${{ matrix.arch }}
+        if: steps.go.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p cache
+          url="https://github.com/AdguardTeam/AdGuardHome/releases/download/${CORE}/AdGuardHome_linux_${{ matrix.arch }}.tar.gz"
+          echo "GET $url"
+          curl -fL --retry 5 --retry-delay 5 "$url" -o "cache/AdGuardHome_${{ matrix.arch }}.tar.gz"
+
+      - name: Extract + stage + zip
+        if: steps.go.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p cache/x
+          tar -xzf "cache/AdGuardHome_${{ matrix.arch }}.tar.gz" -C "cache/x"
+          rm -rf staging; mkdir -p staging
+          cp -a src/. staging/
+          test -f "cache/x/AdGuardHome/AdGuardHome"
+          install -m0755 "cache/x/AdGuardHome/AdGuardHome" "staging/bin/AdGuardHome"
+          # 蓋模組版本號：version=YYYYMMDD-核心tag；versionCode=YYYYMMDD0(0=stable/1=edge)
+          d="$(date -u +%Y%m%d)"
+          case '${{ matrix.channel }}' in stable) cflag=0;; *) cflag=1;; esac
+          sed -i "s|^version=.*|version=${d}-${CORE}|; s|^versionCode=.*|versionCode=${d}0${cflag}|" "staging/module.prop"
+          grep -E '^version|^versionCode' "staging/module.prop"
+          ( cd staging && zip -qr "../AdGuardHomeForRoot_${{ matrix.channel }}_${{ matrix.arch }}.zip" . )
+
+      - name: Upload artifact
+        if: steps.go.outputs.run == 'true'
+        uses: actions/upload-artifact@v5
+        with:
+          name: pkg_${{ matrix.channel }}_${{ matrix.arch }}
+          path: AdGuardHomeForRoot_${{ matrix.channel }}_${{ matrix.arch }}.zip
+          if-no-files-found: error
+
+  release:
+    needs: plan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        channel: [stable, edge]
+    env:
+      CHANNEL: ${{ matrix.channel }}
+      CORE: ${{ matrix.channel == 'stable' && needs.plan.outputs.stable_tag || needs.plan.outputs.edge_tag }}
+      WANTED: ${{ matrix.channel == 'stable' && needs.plan.outputs.want_stable || needs.plan.outputs.want_edge }}
+    steps:
+      - name: Skip if this channel not requested
+        id: go
+        run: echo "run=${WANTED}" >> "$GITHUB_OUTPUT"
+
+      - name: Download this channel artifacts
+        if: steps.go.outputs.run == 'true'
+        uses: actions/download-artifact@v5
+        with:
+          pattern: pkg_${{ matrix.channel }}_*
+          path: out
+          merge-multiple: true
+
+      - name: Publish rolling release auto-${{ matrix.channel }}
+        if: steps.go.outputs.run == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: auto-${{ matrix.channel }}
+          name: "自動最新版（${{ matrix.channel }}）"
+          target_commitish: ${{ github.sha }}
+          prerelease: ${{ matrix.channel == 'edge' }}
+          overwrite: true
+          make_latest: ${{ matrix.channel == 'stable' && 'true' || 'false' }}
+          files: |
+            out/AdGuardHomeForRoot_${{ matrix.channel }}_arm64.zip
+            out/AdGuardHomeForRoot_${{ matrix.channel }}_armv7.zip
+          body: |
+            自動追最新 AdGuardHome 核心（每日打包，滾動覆寫本 tag）。
+
+            - 通道：`${{ matrix.channel }}`
+            - 核心版本：`${{ env.CORE }}`
+            - commit：`${{ github.sha }}`
+            - 建置時間（UTC）：${{ github.run_started_at }}
+
+            刷機後請重啟生效。
