@@ -61,14 +61,10 @@ fi
     i18n_print "- Removed $u locked files out of $c scanned items" "- 从 $c 个文件中删除了 $u 个锁定文件"
 }
 
-# 检查是否首次安装
-if [ -d "$AGH_DIR" ]; then
-  i18n_print "- Backing up configuration" "- 正在备份配置文件"
-  mkdir -p "$BACKUP_DIR"
-  [ -f "$BIN_DIR/AdGuardHome.yaml" ] && cp -f "$BIN_DIR/AdGuardHome.yaml" "$BACKUP_DIR/"
-  [ -f "$SCRIPT_DIR/config.prop" ] && cp -f "$SCRIPT_DIR/config.prop" "$BACKUP_DIR/"
-  [ -f "$SCRIPT_DIR/NoAdsService.sh" ] && cp -f "$SCRIPT_DIR/NoAdsService.sh" "$BACKUP_DIR/"
-fi
+# 直接替代：不再備份/保留舊配置（用戶只用自有 root 版，不裝他人版本）。
+# 順帶清理歷史殘留的備份目錄（舊邏輯備份的是 bin/AdGuardHome.yaml 而非實際讀取的
+# bin/data/AdGuardHome.yaml，本就無效）。
+rm -rf "$BACKUP_DIR"
 
 # 解锁脚本防篡改保护
 if [ -d "$SCRIPT_DIR" ]; then
@@ -98,9 +94,5 @@ chown root:net_raw "$BIN_DIR/AdGuardHome"
 # 2) 手机上直接改配置（端口、启动参数）时会写出 Permission denied 假象，排查成本极高。
 # 安装时仍保留上面对旧安装的解锁步骤，确保从历史版本升级能覆盖。
 
-# 正在保留配置文件
-if [ -f "$BACKUP_DIR/config.prop" ]; then
-  i18n_print "- Preserving configuration file" "- 正在保留配置文件"
-  cp -f "$BACKUP_DIR/config.prop" "$SCRIPT_DIR/"
-fi
+# 配置直接採用模組內建版本（bin/data/AdGuardHome.yaml、config.prop），不再從備份還原。
 i18n_print "- Installation complete. Reboot device." "- 安装完成，请重启设备。"
