@@ -5,10 +5,11 @@ AGH_DIR="/data/adb/agh"
 [ $(pgrep -f "$0" | wc -l) -gt 1 ] && exit
 
 # 广告屏蔽核心函数
-block_ad(){ [ ! -e "$1" ]&&return;lsattr -d "$1"|grep -q "i.*$1"&&return;[ -d "$1" ]&&(rm -rf "$1"&&mkdir -p "$1")&&chattr +i "$1"&&return;[ -f "$1" ]&&> "$1"&&chattr +i "$1"; }
+block_ad(){ [ -e "$1" ] && e="$e $1"; }
 
 # 执行循环
 while :;do
+    e=""
 
 # 添加完屏蔽路径以后必须重启手机生效
     # 美团外卖
@@ -185,8 +186,11 @@ while :;do
    # 中国银河证券
    block_ad "/data/data/com.galaxy.stock/files"
    
+# 广告过滤核心：一次 lsattr 批次查所有已存在路径，只对没锁的做 rm/chattr（大减常駐迴圈 I/O）
+[ -n "$e" ]&&lsattr -d $e|while read -r a p;do case "$a" in *i*)continue;;esac;[ -d "$p" ]&&(rm -rf "$p"&&mkdir -p "$p")&&chattr +i "$p"&&continue;[ -f "$p" ]&&> "$p"&&chattr +i "$p";done
+
 # 自动关闭私人DNS
-settings get global private_dns_mode|grep -q off||settings put global private_dns_mode off
+[ "$(settings get global private_dns_mode)" = "off" ] || settings put global private_dns_mode off
 
 # 自动清空IFW文件夹
 [ -d "/data/system/ifw" ]&&for f in /data/system/ifw/*;do [ -e "$f" ]&&rm -rf /data/system/ifw/*&&break;done

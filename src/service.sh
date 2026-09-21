@@ -53,13 +53,13 @@ else
 fi
 
 # 启动模块附加脚本
-"$SCRIPT_DIR/iptables.sh" &
-"$SCRIPT_DIR/ModuleMOD.sh" &
-"$SCRIPT_DIR/NoAdsService.sh" &
-"$SCRIPT_DIR/ProxyConfig.sh" &
+pgrep -f "$SCRIPT_DIR/iptables.sh" || "$SCRIPT_DIR/iptables.sh" &
+pgrep -f "$SCRIPT_DIR/ModuleMOD.sh" || "$SCRIPT_DIR/ModuleMOD.sh" &
+pgrep -f "$SCRIPT_DIR/NoAdsService.sh" || "$SCRIPT_DIR/NoAdsService.sh" &
+pgrep -f "$SCRIPT_DIR/ProxyConfig.sh" || "$SCRIPT_DIR/ProxyConfig.sh" &
 
 # 不再给脚本重新加 chattr +i：防篡改标记会让后续修复（改端口、改启动参数）
 # 必须先解一次锁才能写，实际只给维护添堵，防不住真正想改的人（root 随时 chattr -i）。
 
 # 日志超限时清空
-[ $(stat -c %s "$MAIN_LOG" || ls -l "$MAIN_LOG" | awk '{print $5}') -ge 102400 ] && : > "$MAIN_LOG"
+[ "$(wc -c < "$MAIN_LOG")" -ge 102400 ] && : > "$MAIN_LOG"
