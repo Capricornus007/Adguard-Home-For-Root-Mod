@@ -66,12 +66,12 @@ dns:
     - 127.0.0.0/8
     - ::1/128
   cache_enabled: true
-  cache_size: 100000000
-  cache_ttl_min: 600
+  cache_size: 50000
+  cache_ttl_min: 60
   cache_ttl_max: 7200
   cache_optimistic: true
   cache_optimistic_answer_ttl: 30s
-  cache_optimistic_max_age: 12h
+  cache_optimistic_max_age: 1h
   bogus_nxdomain: []
   aaaa_disabled: false
   enable_dnssec: true
@@ -181,6 +181,14 @@ filters:
     url: https://raw.githubusercontent.com/zsakvo/AdGuard-Custom-Rule/master/rule/zhihu-strict.txt
     name: Zhihu filters
     id: 1771814664
+  - enabled: true
+    url: https://divested.dev/hosts
+    name: Divested Hosts
+    id: 1788653208
+  - enabled: true
+    url: https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/fakenews-gambling/hosts
+    name: StevenBlack's Unified hosts + fakenews + gambling
+    id: 1788653207
 whitelist_filters:
   - enabled: true
     url: https://raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/allow.txt
@@ -1020,7 +1028,7 @@ user_rules:
   - '||abtest*-misc.zijieapi.com^$important'
   - '||ugsdk.cn^$important'
   - '||track.ranfenghd.com^$important'
-  - '||tnc*-alisc*.zijieapi.com^$importat'
+  - '||tnc*-alisc*.zijieapi.com^$important'
   - '@@||saveu5-normal-lq.zijieapi.com^$important'
   - '@@||ecombdimg.com^$important'
   - '#屏蔽国家反诈中心及其相关域名'
