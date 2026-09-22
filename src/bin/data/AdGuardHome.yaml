@@ -1995,6 +1995,7 @@ user_rules:
   - '||consent-pref.trustarc.com^$important'
   - '||cdn.jwplayer.com^$important'
   - '||metrics.icloud.com^$important'
+  - "@@||pureapk.com^$important"
 dhcp:
   enabled: false
   interface_name: ""
