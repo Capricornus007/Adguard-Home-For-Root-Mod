@@ -30,24 +30,24 @@ dns:
   ratelimit_whitelist: []
   refuse_any: true
   upstream_dns:
-    - '# 國內 DNS'
-    - https://223.5.5.5/dns-query
-    - tls://223.5.5.5
-    - https://1.12.12.12/dns-query
-    - '# Powered by 03'
-    - https://dns.google/dns-query
-    - tls://dns.google
-    - https://doh.pub/dns-query
-    - https://dns.pub/dns-query
-    - tls://dns.pub
+    # ── 2026-09-22：全域池只留「不撒謊」的兩家上游（互為備援）──────────────────
+    # 原因（實測）：223.5.5.5、1.12.12.12、120.53.53.53(doh.pub) 這批境內解析器對
+    #   google / youtube / twitter / wikipedia / discord / medium / archive 等域名
+    #   一律回 Facebook、Twitter、Tumblr、Dropbox 網段的假 IP，導致客戶端 TLS 憑證對不上
+    #   （NekoBox 上 YouTube 的表現就是一片空白 + 連環 net_error -202）。
+    # 也別用 tls:// 與域名形 DoH：本模組在 iptables 裡 REJECT 了 853（防系統繞過 AGH），
+    #   會把自己的 tls:// 上游打死；而 `https://dns.google/dns-query` 這種要先解析主機名的
+    #   上游，在 NB4A 開著時會拿到 sing-box 的 fakeip(198.18.x)，一樣連不出去。
+    # 注意：AGH v0.108.0-b.90 沒有 use_most_specific_servers，load_balance 是「所有適用上游
+    #   賽跑、誰先回用誰」，所以 `#域名` 釘選不具排他性——只要境內上游還在池裡就會抢答，
+    #   要修就得把它們整條移出，而不是加釘選。
+    - https://8.8.8.8/dns-query
+    - https://1.1.1.1/dns-query
   upstream_dns_file: ""
-  bootstrap_dns:
-    - 180.184.1.1
-    - 180.184.2.2
-    - 2001:de4::101
-    - 2001:de4::102
-    - 8.8.8.8:53
-    - 119.29.29.29:53
+  # 2026-09-22：清空。上游全是 IP 形、不需要 bootstrap 解析主機名；
+  # 留著明文 UDP 的 bootstrap 只會多出一條可被路徑注入假 IP 的出口。
+      # 2026-09-22：清空。上游全是 IP 形、不需 bootstrap 解析；留明文 UDP 只會多一條可被注入的出口
+  bootstrap_dns: []
   fallback_dns: []
   upstream_mode: load_balance
   fastest_timeout: 1s
