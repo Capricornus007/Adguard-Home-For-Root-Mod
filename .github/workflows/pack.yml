@@ -94,8 +94,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ ! "${GITHUB_REF_NAME}" =~ ^[0-9]{8}$ ]]; then
-            echo "Tag must be an 8-digit date (YYYYMMDD), got: ${GITHUB_REF_NAME}" >&2
+          if [[ ! "${GITHUB_REF_NAME}" =~ ^[0-9]{8}([0-9]{2})?$ ]]; then
+            echo "Tag must be YYYYMMDD or YYYYMMDDNN, got: ${GITHUB_REF_NAME}" >&2
             exit 1
           fi
 
