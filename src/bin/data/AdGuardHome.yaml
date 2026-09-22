@@ -41,13 +41,22 @@ dns:
     # 注意：AGH v0.108.0-b.90 沒有 use_most_specific_servers，load_balance 是「所有適用上游
     #   賽跑、誰先回用誰」，所以 `#域名` 釘選不具排他性——只要境內上游還在池裡就會抢答，
     #   要修就得把它們整條移出，而不是加釘選。
+    - https://dns.sb/dns-query
     - https://8.8.8.8/dns-query
     - https://1.1.1.1/dns-query
   upstream_dns_file: ""
   # 2026-09-22：清空。上游全是 IP 形、不需要 bootstrap 解析主機名；
   # 留著明文 UDP 的 bootstrap 只會多出一條可被路徑注入假 IP 的出口。
       # 2026-09-22：清空。上游全是 IP 形、不需 bootstrap 解析；留明文 UDP 只會多一條可被注入的出口
-  bootstrap_dns: []
+  # bootstrap 只用於「解析上游主機名」，與答案取信無關：
+  #   - 放境內解析器是安全的：DoH 仍會驗證 dns.sb 的 TLS 憑證，偽造 IP 拿不到有效憑證。
+  #   - 但**不能清空**：https://dns.sb/dns-query 是域名形上游，無 bootstrap 時 AGH 會退化成
+  #     「拿 dns.sb 去解析 dns.sb 自己」→ 每次 20 秒超時（2026-09-23 在實機踩到，youtube 首查 10.2s）。
+  #   - 選 223.5.5.5/119.29.29.29 是因為它們在模組 iptables 的 ignore_dest_list 內（不被 53 劫持）、
+  #     且境內直連可達；經隧道的 1.1.1.1:53/8.8.8.8:53 明文 UDP 常被節點不放行。
+  bootstrap_dns:
+    - 223.5.5.5
+    - 119.29.29.29
   fallback_dns: []
   upstream_mode: load_balance
   fastest_timeout: 1s
