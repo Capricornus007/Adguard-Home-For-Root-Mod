@@ -87,7 +87,7 @@ jobs:
         id: go
         run: echo "run=${WANTED}" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         if: steps.go.outputs.run == 'true'
 
       - name: Download AdGuardHome binary for ${{ matrix.arch }}
@@ -118,7 +118,7 @@ jobs:
 
       - name: Upload artifact
         if: steps.go.outputs.run == 'true'
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: pkg_${{ matrix.channel }}_${{ matrix.arch }}
           path: AdGuardHomeForRoot_${{ matrix.channel }}_${{ matrix.arch }}.zip
@@ -142,7 +142,7 @@ jobs:
 
       - name: Download this channel artifacts
         if: steps.go.outputs.run == 'true'
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           pattern: pkg_${{ matrix.channel }}_*
           path: out
@@ -150,7 +150,7 @@ jobs:
 
       - name: Publish rolling release auto-${{ matrix.channel }}
         if: steps.go.outputs.run == 'true'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: auto-${{ matrix.channel }}
           name: "自動最新版（${{ matrix.channel }}）"
