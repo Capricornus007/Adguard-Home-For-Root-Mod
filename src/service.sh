@@ -57,6 +57,9 @@ pgrep -f "$SCRIPT_DIR/iptables.sh" || "$SCRIPT_DIR/iptables.sh" &
 pgrep -f "$SCRIPT_DIR/ModuleMOD.sh" || "$SCRIPT_DIR/ModuleMOD.sh" &
 pgrep -f "$SCRIPT_DIR/NoAdsService.sh" || "$SCRIPT_DIR/NoAdsService.sh" &
 pgrep -f "$SCRIPT_DIR/ProxyConfig.sh" || "$SCRIPT_DIR/ProxyConfig.sh" &
+# 上游健康探測：iptables.sh 只看得见「进程在不在」，看不见「进程活着但所有上游都哑了」
+# 这种静默故障（2026-09-27 就是它让 NB4A 有隧道零流量、看门狗自断），由这支补上。
+pgrep -f "$SCRIPT_DIR/healthcheck.sh" || "$SCRIPT_DIR/healthcheck.sh" &
 
 # 不再给脚本重新加 chattr +i：防篡改标记会让后续修复（改端口、改启动参数）
 # 必须先解一次锁才能写，实际只给维护添堵，防不住真正想改的人（root 随时 chattr -i）。
