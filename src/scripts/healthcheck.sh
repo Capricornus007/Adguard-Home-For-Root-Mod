@@ -66,9 +66,39 @@ echo $$ > "$PIDFILE"
 
 log() { echo "$(date '+%F %T') [healthcheck] $1" >> "$MAIN_LOG"; }
 
-# 通知只在「重啟到上限仍不健康」時發一次，不反覆轟炸通知欄
+# 全倉「唯一」的通知出口：只在確定要提醒用戶時呼叫，呼叫端自己用 xxx_notified 鎖成一次，
+# 本函式不疊加節流。簽名 notify <內文> <標題>（沿用 e402887 以來的參數順序，呼叫端不改）。
+#
+# 為什麼不能像以前那樣只寫死 `cmd notification post`：本 ROM 能不能真的彈出、root shell
+# 內建的 cmd/am 是否被裁掉，這一輪無法在不碰手機的前提下實證。賭它一定彈＝可能靜默失效，
+# 正是用戶最討厭的形態。所以改成「運行期逐級探測、都不行就保底寫日誌」，且絕不讓本腳本崩或卡：
+#   路徑 A cmd notification post（Android shell 內建通知，root 免額外授權；最可能真彈出）
+#   路徑 B am broadcast（部分 ROM 有對應接收端時才彈，best-effort 次選；通常無接收端＝不彈，
+#          但仍比整條通知鏈直接消失好，且 am 也在設備必存在清單內）
+#   路徑 C 只寫日誌（保底，一定能留痕——即使 A/B 都不彈，用戶仍可從 agh.log 看到這一行）
+# 候選只用「设备上必然存在」的（cmd/am/log 檔），不准引入任何需要安裝／授權的東西。
+# 每條都用 command -v 先篩存在性、輸出丟棄、失敗就往下退；選中哪條寫進日誌一行做留痕。
+_run_guarded() {
+    # 有 toybox timeout 就加 5 秒保險，避免某些 ROM 上 cmd/am 卡死拖垮整個探測循環；
+    # 沒有 timeout 就直接跑（呼叫端已 2>/dev/null，最壞是該次通知失敗退到日誌）。
+    if command -v timeout >/dev/null 2>&1; then
+        timeout 5 "$@"
+    else
+        "$@"
+    fi
+}
+
 notify() {
-    cmd notification post -S bigtext -t "$2" "agh-healthcheck" "$1" >/dev/null 2>&1
+    _n_body="$1"; _n_title="$2"; _n_path="log(保底)"
+    if command -v cmd >/dev/null 2>&1 && \
+        _run_guarded cmd notification post -S bigtext -t "$_n_title" "agh-healthcheck" "$_n_body" >/dev/null 2>&1; then
+        _n_path="cmd-notification"
+    elif command -v am >/dev/null 2>&1 && \
+        _run_guarded am broadcast -a "agh.healthcheck.notify" --es title "$_n_title" --es body "$_n_body" >/dev/null 2>&1; then
+        _n_path="am-broadcast"
+    fi
+    # 無論走哪條路徑，都固定留一行「這次用的是哪條路徑」＋通知內容，事後好核對、也保底可见
+    echo "$(date '+%F %T') [healthcheck] 通知[出口=$_n_path]：$_n_title｜$_n_body" >> "$MAIN_LOG"
 }
 
 # 參數可被 config.prop 覆蓋（檔內這幾個預設是註解掉的，所以也允許用環境變數傳入做除錯）
@@ -83,6 +113,7 @@ notify() {
 [ -n "$start_delay" ]     || start_delay=90      # 開機初期網路還沒就緒，先穩定一下再開始判定
 [ -n "$redir_port" ]      || redir_port=5591
 [ -n "$poison_check" ]    || poison_check=1      # 投毒判定總開關；想關掉設 0（只影響誠實性檢查，重啟邏輯不受波及）
+[ -n "$poison_check_aaaa" ] || poison_check_aaaa=1 # AAAA(IPv6) 誠實性檢查開關，預設開。理由：用戶明確在意 IPv6，境內上游會回假 v6（實測形態如 2001::1），v6 假值必須能定罪才不辜負 v6 支援；而「投毒」分支本來就不重啟（重啟救不了鏈路注入），所以加 AAAA 檢查零風險，最壞只是多一條不重啟的日誌／通知。設 0 可單關 v6、保留 v4 判定。
 [ -n "$poison_wait" ]     || poison_wait=5       # 誠實性檢查等回覆秒數：投毒是鏈路在途注入、回得飞快（0.x 秒級），5s 綽綽有餘；真答案偶爾慢過這個上限只會被判「無法判定」而不是投毒——寧可漏判也不亂扣帽子，更不會觸發重啟
 [ -n "$poison_threshold" ] || poison_threshold=2 # 累計幾輪假回覆才定罪投毒：單發一次假 IP 可能是快取/anycast 邊界，要兩次獨立證據才報，避免驚呼狼來了
 
@@ -187,8 +218,12 @@ ipdot() {
 # 回傳：0=誠實；1=假 IP（投毒證據）；2=無法判定（沒回覆／0.0.0.0 本地封應答／無 A
 # 記錄——不據此定罪，死活交給存活探測判）；3=對既存域名給權威負面應答（NXDOMAIN/
 # SERVFAIL/REFUSED）——正常解析器不會對 dns.google 這樣答，同樣算投毒證據。
+# 另設全域 honest_local_block：1＝這次「無法判定」是因為本地規則把 dns.google 自己攔了
+# （拿到 0.0.0.0）或完全查不到 A 記錄——這是用戶最討厭的「靜默壞掉」形態，主循環據此
+# 一次性提示（見 ggl_hint_done）；0＝沒回覆／誠實／定罪（沒回覆屬鏈路問題，不歸因本地規則）。
 # 定罪後**不重啟**：投毒發生在鏈路／上游端，重啟 AGH 救不了，狂重啟只會更糟。
 probe_honesty() {
+    honest_local_block=0
     # 封包：ID=0x1338 RD=1 QDCOUNT=1 ＋ "\003dns" "\006google" 根標籤 ＋ QTYPE=A QCLASS=IN
     printf '\023\070\001\000\000\001\000\000\000\000\000\000\003dns\006google\000\000\001\000\001' > "$PKT_FILE" || return 2
     t0=$(date +%s)
@@ -198,6 +233,7 @@ probe_honesty() {
     case "$resp" in
         *000400000000*)
             honest_detail="回覆 0.0.0.0＝本地過濾規則攔了 dns.google（不是投毒證據，請檢查規則）"
+            honest_local_block=1
             return 2 ;;
     esac
     rc4=$(printf '%s' "$resp" | cut -c8)
@@ -209,7 +245,7 @@ probe_honesty() {
     # A 記錄 RDATA：TYPE(0001)+CLASS(0001)+TTL(8hex)+RDLENGTH(0004)+IP(8hex)。
     # 問題段結尾的 "00010001" 後面沒有 TTL/RDLENGTH/IP 可配，不會誤配。
     ips=$(printf '%s' "$resp" | grep -oE '00010001[0-9a-f]{8}0004[0-9a-f]{8}' | sed 's/^00010001[0-9a-f]\{8\}0004//')
-    [ -n "$ips" ] || { honest_detail="NOERROR 但沒有可解析的 A 記錄（可能只有 CNAME）"; return 2; }
+    [ -n "$ips" ] || { honest_detail="NOERROR 但沒有可解析的 A 記錄（可能只有 CNAME）"; honest_local_block=1; return 2; }
     for ip in $ips; do
         case "$ip" in
             08080808|08080404) ;;
@@ -217,6 +253,63 @@ probe_honesty() {
         esac
     done
     return 0
+}
+
+# 八組 4 位 hex → 冒號分隔的 v6 字串（僅供日誌可讀，不做 :: 壓縮）。
+# POSIX sh 沒字串切片，逐段 cut，跟 ipdot 同思路。
+v6pretty() {
+    h="$1"
+    printf '%s:%s:%s:%s:%s:%s:%s:%s' \
+        "$(printf '%s' "$h" | cut -c1-4)" "$(printf '%s' "$h" | cut -c5-8)" \
+        "$(printf '%s' "$h" | cut -c9-12)" "$(printf '%s' "$h" | cut -c13-16)" \
+        "$(printf '%s' "$h" | cut -c17-20)" "$(printf '%s' "$h" | cut -c21-24)" \
+        "$(printf '%s' "$h" | cut -c25-28)" "$(printf '%s' "$h" | cut -c29-32)"
+}
+
+# 誠實性檢查的 IPv6 版（AAAA）：同問 dns.google，但 QTYPE=AAAA(28)。誠實上游必回
+# 2001:4860:4860::8888 / ::4444（Google 的 v6 任播，多年未變，跟 v4 的 8.8.8.8/8.8.4.4
+# 一樣好當死基準）；境內注入的假 v6 形如 2001::1。回傳：
+#   0=誠實；1=假 v6（投毒證據，進同一個 poison_fails 計數、湊滿門檻才定罪、照樣不重啟）；
+#   2=無法判定（不定罪也不平反）。
+# 關鍵保守原則：v6「拿不到」絕不等於投毒——很多上游不提供 v6、或鏈路根本沒 v6，正常
+# 表現就是 NOERROR 但無 AAAA 記錄，或 SERVFAIL/REFUSED，甚至本地黑名單回 :: 全零。這些
+# 一律判「無法判定」。只有「明確回了一條非預期、又非全零的 AAAA」（如 2001::1）才當投毒。
+# 因投毒分支本來就不重啟，加這支對存活／重啟邏輯零風險，只是把用戶在意的 v6 假值纳入定罪。
+probe_honesty_aaaa() {
+    honest_detail_aaaa=""
+    # 封包同 A 版，只差 QTYPE=0x001C（八進位 \000\034）；ID 用 0x1339 與 A 版區隔
+    printf '\023\071\001\000\000\001\000\000\000\000\000\000\003dns\006google\000\000\034\000\001' > "$PKT_FILE" || return 2
+    t0=$(date +%s)
+    wait_budget="$poison_wait"
+    want_id="1339"
+    run_probe || return 2
+    rc4=$(printf '%s' "$resp" | cut -c8)
+    # v6 版：只有 NOERROR 才往下拆記錄。SERVFAIL/NXDOMAIN/REFUSED 對 AAAA 可能只是
+    # 「上游／鏈路不提供 v6」的正常結果，不能拿去定罪（與 v4 的權威負面＝投毒相反）。
+    case "$rc4" in
+        0) ;;
+        *) honest_detail_aaaa="rcode=$rc4（v6 可能本就不提供，非投毒證據）"; return 2 ;;
+    esac
+    # AAAA RDATA：TYPE(001c)+CLASS(0001)+TTL(8hex)+RDLENGTH(0010)+IPv6(32hex)。
+    v6s=$(printf '%s' "$resp" | grep -oE '001c0001[0-9a-f]{8}0010[0-9a-f]{32}' | sed 's/^001c0001[0-9a-f]\{8\}0010//')
+    [ -n "$v6s" ] || { honest_detail_aaaa="NOERROR 但無 AAAA 記錄（上游／鏈路可能沒 v6）"; return 2; }
+    seen_real=0
+    for v6 in $v6s; do
+        case "$v6" in
+            # :: 全零＝AGH 本地黑名單的 v6 預設應答（對應 v4 的 0.0.0.0），不據此定罪
+            00000000000000000000000000000000)
+                honest_detail_aaaa="回覆 ::＝本地規則攔了 dns.google 的 AAAA"; return 2 ;;
+            # 誠實基準（Google v6 任播）；跳過繼續看其他記錄
+            20014860486000000000000000008888|20014860486000000000000000004444)
+                seen_real=1 ;;
+            # 其餘非預期值＝假 v6（如 2001::1）＝投毒證據
+            *)
+                honest_detail_aaaa="$(v6pretty "$v6")（預期 2001:4860:4860::8888/::4444，hex 原值 $v6）"
+                return 1 ;;
+        esac
+    done
+    [ "$seen_real" -eq 1 ] && return 0
+    return 2
 }
 
 # 一輪探測：連發 probe_attempts 個隨機名稱，只要有一發拿到上游答覆這輪就算活。
@@ -272,6 +365,7 @@ invalid_logged=0
 poison_fails=0
 poison_active=0
 poison_notified=0
+ggl_hint_done=0
 probe_cost=0
 round_cost=0
 # run_probe 的介面變數（探測回覆 hex／判定明細）
@@ -280,10 +374,12 @@ wait_budget=0
 want_id=""
 resp=""
 honest_detail=""
+honest_detail_aaaa=""
+honest_local_block=0
 
 sleep "$start_delay"
 port=$(dns_port)
-log "上游探測啟動（目標 127.0.0.1:$port，單發等 ${probe_wait}s，一連 $probe_attempts 發任一有答即算健康，連續 $fail_threshold 輪失敗才重啟，一輪故障最多重啟 $max_restart 次，間隔 ${probe_interval}s，投毒判定 $poison_check（dns.google 誠實性檢查，累計 $poison_threshold 輪假回覆只通知不重啟））"
+log "上游探測啟動（目標 127.0.0.1:$port，單發等 ${probe_wait}s，一連 $probe_attempts 發任一有答即算健康，連續 $fail_threshold 輪失敗才重啟，一輪故障最多重啟 $max_restart 次，間隔 ${probe_interval}s，投毒判定 $poison_check（dns.google 誠實性檢查，v6/AAAA $poison_check_aaaa，累計 $poison_threshold 輪假回覆只通知不重啟））"
 
 while :; do
     # config.prop 可能在運行中被改（例如換劫持埠）
@@ -296,6 +392,7 @@ while :; do
     [ -n "$fail_threshold" ] || fail_threshold=3
     [ -n "$max_restart" ]    || max_restart=2
     [ -n "$poison_check" ]   || poison_check=1
+    [ -n "$poison_check_aaaa" ] || poison_check_aaaa=1
     [ -n "$poison_wait" ]    || poison_wait=5
     [ -n "$poison_threshold" ] || poison_threshold=2
     port=$(dns_port)
@@ -310,38 +407,77 @@ while :; do
     rc=$?
 
     if [ "$rc" -eq 0 ]; then
-        # 上游有答覆≠答覆誠實。存活之後補一發誠實性檢查：境內注入會「秒回假 IP」，
+        # 上游有答覆≠答覆誠實。存活之後補一發誠實性檢查：境內注入會「秒回假 IP／假 v6」，
         # 這種情況重啟完全救不了（鍋在鏈路／上游端），所以只記日誌＋整段投毒只通知
         # 一次，並**跳過下面的重新武裝**——投毒中的「有回應」不能拿來證明上游健康。
         if [ "$poison_check" -eq 1 ]; then
             probe_honesty
             hc=$?
-            if [ "$hc" -eq 1 ] || [ "$hc" -eq 3 ]; then
+            # v4 定罪了才省下一發 v6；否則照問 v6（用戶在意 IPv6，假 v6 也要能定罪）。
+            hc6=2
+            if [ "$hc" -ne 1 ] && [ "$hc" -ne 3 ] && [ "$poison_check_aaaa" -eq 1 ]; then
+                probe_honesty_aaaa
+                hc6=$?
+            fi
+            # 綜合判定：v4 假 IP／權威負面，或 v6 明確假值，任一到手都算投毒證據。
+            poison_hit=0
+            if [ "$hc" -eq 1 ] || [ "$hc" -eq 3 ]; then poison_hit=1; fi
+            if [ "$hc6" -eq 1 ]; then poison_hit=1; fi
+
+            if [ "$poison_hit" -eq 1 ]; then
+                # 組一句明細：把定罪的那一側寫進去（v4／v6 都可能，兩側都中就把兩側都寫）。
+                poison_detail=""
+                poison_sep=""
+                if [ "$hc" -eq 1 ] || [ "$hc" -eq 3 ]; then
+                    poison_detail="A：$honest_detail"
+                    poison_sep=" / "
+                fi
+                if [ "$hc6" -eq 1 ]; then
+                    poison_detail="${poison_detail}${poison_sep}AAAA：${honest_detail_aaaa}"
+                fi
                 poison_fails=$((poison_fails + 1))
                 # 定罪前逐輪留痕（要看得見累積過程）；定罪之後轉靜默低頻複查，
                 # 免得長期投毒把 agh.log 刷爆——通知本身已由 poison_notified 鎖成一次。
                 if [ "$poison_fails" -le "$poison_threshold" ]; then
-                    log "HC_POISON $poison_fails/$poison_threshold dns.google 回覆異常：$honest_detail——投毒是鏈路／上游的鍋，重啟無效，不重啟"
+                    log "HC_POISON $poison_fails/$poison_threshold dns.google 回覆異常（$poison_detail）——投毒是鏈路／上游的鍋，重啟無效，不重啟"
                 fi
                 if [ "$poison_fails" -ge "$poison_threshold" ] && [ "$poison_active" -eq 0 ]; then
                     poison_active=1
                     if [ "$poison_notified" -eq 0 ]; then
-                        notify "上游 DNS 回覆疑遭投毒（$honest_detail）。重啟無法解決，請檢查線路／上游。詳見 agh.log" "AGH 上游投毒疑慮"
+                        notify "上游 DNS 回覆疑遭投毒（$poison_detail）。重啟無法解決，請檢查線路／上游。詳見 agh.log" "AGH 上游投毒疑慮"
                         poison_notified=1
                     fi
                 fi
                 sleep "$probe_interval"
                 continue
             fi
-            if [ "$hc" -eq 0 ] && [ "$poison_active" -eq 1 ]; then
-                log "上游回覆恢復誠實（投毒警報解除，此前累計可疑 $poison_fails 輪），計數歸零、重新武裝"
-            fi
-            if [ "$hc" -eq 0 ]; then
+            # 沒定罪：v4 或 v6 任一拿到誠實答案即平反、歸零、重新武裝（也解除本地攔截提示鎖）。
+            if [ "$hc" -eq 0 ] || [ "$hc6" -eq 0 ]; then
+                if [ "$poison_active" -eq 1 ]; then
+                    log "上游回覆恢復誠實（投毒警報解除，此前累計可疑 $poison_fails 輪），計數歸零、重新武裝"
+                fi
                 poison_fails=0
                 poison_active=0
                 poison_notified=0
+                ggl_hint_done=0
+            else
+                # v4、v6 都「無法判定」。這裡補上用戶要的「不能再完全靜默」：
+                # 若 v4 側是因為本地規則把 dns.google 攔了（0.0.0.0）或完全查不到 A 記錄
+                # （honest_local_block=1），一次性提示去檢查規則；同一場攔截期間不重複刷屏，
+                # 等下次能判定（v4/v6 誠實）時由上面那支 ggl_hint_done=0 重新武裝。
+                # 反過來說「沒回覆」屬鏈路問題（honest_local_block=0），不歸因本地規則，
+                # 並把鎖鬆開，好讓之後真被攔時能重新提示一次。
+                if [ "$honest_local_block" -eq 1 ]; then
+                    if [ "$ggl_hint_done" -eq 0 ]; then
+                        log "HC_BLOCKED_HINT dns.google 誠實性檢查拿不到有效答案（$honest_detail）——通常是本地過濾規則把 dns.google 自己攔了，投毒判定與存活／重啟都不受影響，但請檢查規則（同一場攔截只提示這一次）"
+                        notify "健康探測的誠實性檢查被本地規則攔掉（$honest_detail），投毒判定失效但解析與過濾不受影響，請檢查是否誤攔 dns.google" "AGH 探測規則衝突"
+                        ggl_hint_done=1
+                    fi
+                else
+                    ggl_hint_done=0
+                fi
+                # 兩者都無法判定不動投毒計數：沒證據既不定罪也不平反
             fi
-            # hc=2（無法判定）不動計數：一發沒回或本地 0.0.0.0 既不能定罪也不能平反
         fi
         # 上游有答覆（NOERROR／NXDOMAIN）且誠實性檢查通過；只在「剛從故障裡走出來」時留一行，健康時完全不寫日誌
         if [ "$fails" -gt 0 ] || [ "$gave_up" -eq 1 ] || [ "$notified" -eq 1 ]; then
