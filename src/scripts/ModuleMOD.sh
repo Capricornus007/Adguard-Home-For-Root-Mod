@@ -6,9 +6,12 @@ LAST_LOCALE="INIT"
 AGH_DIR="${AGH_DIR:-/data/adb/agh}"
 
 # 防止重複啟動：pidfile ＋ /proc/<pid>/cmdline 驗證（同 healthcheck.sh 那套模式）。
-# 舊寫法 `[ "$(pgrep -f "$0"|wc -l)" -gt 1 ] && exit` 的命令代換會派生 cmdline 相同的
-# 子 shell，把自己數成兩個 → 第一實例也秒退。本腳本主循環在前臺（由 service.sh 用 &
-# 拉起），所以 $$ 就是那個存活循環；旧 PID 被複用時 /proc 驗證不會擋死新實例。
+# 舊寫法 `[ "$(pgrep -f "$0" | wc -l)" -gt 1 ] && exit` 是**平台相關**的脆弱守門：
+# 在 GNU pgrep（PC 沙箱／CI／任何 Linux 機）上，命令代換會派生一個 cmdline 與本腳本
+# 一模一樣、PID 不同的子 shell，把自己數成兩個 → 直接秒退；在設備的 toybox 上實測
+# **不會**秒退（證據：2026-09-27 本機的 iptables.sh 守護循環活著，還把飛行模式連開關三次）。
+# 所以換 pidfile 是「把運氣換成確定」，不是「這支以前沒跑」——設備行為不該因此改變。
+# 本腳本主循環在前臺（由 service.sh 用 & 拉起），所以 $$ 就是那個存活循環；旧 PID 被複用時 /proc 驗證不會擋死新實例。
 PIDFILE="$AGH_DIR/ModuleMOD.pid"
 oldpid=$(cat "$PIDFILE" 2>/dev/null)
 if [ -n "$oldpid" ] && grep -q "ModuleMOD.sh" "/proc/$oldpid/cmdline" 2>/dev/null; then

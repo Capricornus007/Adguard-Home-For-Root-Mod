@@ -18,9 +18,11 @@ IP6T="ip6tables -w 5"
 log() { echo "$(date '+%F %T') [iptables] $1" >> "$MAIN_LOG"; }
 
 # 防止重複啟動：pidfile ＋ /proc/<pid>/cmdline 驗證（同 healthcheck.sh 那套模式）。
-# 舊寫法 `[ "$(pgrep -f "$0"|wc -l)" -gt 1 ] && exit` 已被實測證明會自傷：命令代換
-# 會派生一個 cmdline 與本腳本一模一樣、但 PID 不同的子 shell，把自己數成兩個 →
-# 連第一實例都秒退，這支常駐循環從沒真正跑起來過。改 pidfile 後：
+# 舊寫法 `[ "$(pgrep -f "$0"|wc -l)" -gt 1 ] && exit` 是**平台相關**的脆弱守門：在 GNU pgrep（PC 沙箱／CI／任何 Linux 機）上，命令代換會派生一個 cmdline 與本腳本一模一樣、
+# PID 不同的子 shell，把自己數成兩個 → 直接秒退；但在設備的 toybox 上實測**不會**秒退
+# （證據：2026-09-27 本機的 iptables.sh 守護循環活著，還把飛行模式連開關三次）。
+# 所以換 pidfile 是「把運氣換成確定」，不是「這支以前沒跑」——設備行為不該因此改變。
+# 改 pidfile 後：
 #   本腳本把守護循環用 `done &` 丟背景、父進程随即退出，所以不能記父 $$（父一死檔裡
 #   就是死 pid），改記背景循環的 $!（見檔案末尾）；另加 /proc/<pid>/cmdline 認 iptables.sh，
 #   舊 PID 被複用也不會擋死新實例。此處只做「有無活循環」的讀取檢查。

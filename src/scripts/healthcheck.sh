@@ -93,9 +93,9 @@ notify() {
     if command -v cmd >/dev/null 2>&1 && \
         _run_guarded cmd notification post -S bigtext -t "$_n_title" "agh-healthcheck" "$_n_body" >/dev/null 2>&1; then
         _n_path="cmd-notification"
-    elif command -v am >/dev/null 2>&1 && \
-        _run_guarded am broadcast -a "agh.healthcheck.notify" --es title "$_n_title" --es body "$_n_body" >/dev/null 2>&1; then
-        _n_path="am-broadcast"
+    # 刻意**不**放 `am broadcast` 當次選：無接收端的 broadcast 照樣回 exit 0，
+    # 日誌會寫「出口=am-broadcast」但通知欄什麼都沒彈 —— 那是假陽性，
+    # 會讓事後看日誌的人以為通知鏈是通的。寧可直接落到 log(保底)。
     fi
     # 無論走哪條路徑，都固定留一行「這次用的是哪條路徑」＋通知內容，事後好核對、也保底可见
     echo "$(date '+%F %T') [healthcheck] 通知[出口=$_n_path]：$_n_title｜$_n_body" >> "$MAIN_LOG"
