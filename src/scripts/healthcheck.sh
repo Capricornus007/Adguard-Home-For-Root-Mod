@@ -28,9 +28,21 @@
 # 一「輪」連發 3 個隨機名稱（任一有答即算活），連續 3 輪失敗才重啟——單發會因為
 # load_balance 只派一條上游＋冷啟動要 11s 而憑空報死，實測踩過。
 #
+# 「有回覆」還要再分兩種結論（2026-09-27 定案，重啟能不能救就分在這裡）：
+# · 死掉＝需要上游的查詢無回覆／SERVFAIL／REFFAIL。線路或上游對端故障，AGH 內部
+#   狀態也可能卡死，重啟有可能救 → 走重啟路徑（有節流與上限）。
+# · 被投毒＝秒回、但回的是假 IP。境內線路在途注入的實測假值形如 157.240.7.20、
+#   185.45.5.35（AAAA 常見 2001::1）。這是上游／線路的鍋，**重啟完全沒用**，
+#   所以投毒只記日誌＋發一次通知，絕不重啟。判據用「誠實性檢查」：問 dns.google
+#   （Google 自己的域、誠實上游必回 8.8.8.8/8.8.4.4，且在本模組 ignore_dest_list
+#   豁免清單上不會被本地劫持），拿到非預期的 A 記錄即記一筆可疑、湊滿門檻才定罪。
+# · 黑名單域名秒回 0.0.0.0 是**正常行為**，既不當健康證據也不當故障證據（rc=2 不計）。
+#
 # 設備上跑的是 toybox/POSIX sh，本檔不得使用 bashism。
 
-AGH_DIR="/data/adb/agh"
+# 允許用環境變數改根目錄：僅供假環境演練（/tmp 下的沙箱）使用；
+# 設備上没人設這個變數，走預設絕對路徑，與 service.sh 拉的實際位置一致。
+AGH_DIR="${AGH_DIR:-/data/adb/agh}"
 BIN_DIR="$AGH_DIR/bin"
 CONFIG_FILE="$AGH_DIR/scripts/config.prop"
 YAML_FILE="$BIN_DIR/data/AdGuardHome.yaml"
@@ -39,11 +51,18 @@ MAIN_LOG="$AGH_DIR/agh.log"
 PKT_FILE="$AGH_DIR/.healthcheck-query.bin"
 ANS_FILE="$AGH_DIR/.healthcheck-answer.bin"
 
-# 防止重複啟動（與 iptables.sh／NoAdsService.sh 同一套寫法）
-# 注意：pgrep -f 比的是整條 cmdline，所以若有人用 `su -c "sh .../healthcheck.sh"` 這種
-# 「外層字串裡也帶著同一個路徑」的方式啟動，外層行程會被一起算進去而讓實例直接退出；
-# 要手動除錯就得像 service.sh 那樣直接拉腳本，或經過一层 exec 啟動器。
-[ "$(pgrep -f "$0" | wc -l)" -gt 1 ] && exit
+# 防止重複啟動：用 pidfile，不用 `pgrep -f` 數 cmdline。原因（PC 沙箱演練實測踩中）：
+# 「$(pgrep ... | wc -l)」的命令代換會派生一個 cmdline 與主體一模一樣、但 PID 不同
+# 的子 shell，$$ 標的是主體、awk 濾不掉它，自己把自己判成兩個實例秒退；祖先行程的
+# cmdline 只要剛好帶到本檔路徑（如 `su -c "sh .../healthcheck.sh"` 手工啟動）也會
+# 誤殺真實例。pidfile 另加一道 /proc/<pid>/cmdline 驗證：舊 PID 若已被別的傢伙用走
+# （重開機後 pidfile 殘留的情境），不會把新實例擋死。與 iptables.sh 守門同目的、寫法不同。
+PIDFILE="$AGH_DIR/healthcheck.pid"
+oldpid=$(cat "$PIDFILE" 2>/dev/null)
+if [ -n "$oldpid" ] && grep -q "healthcheck" "/proc/$oldpid/cmdline" 2>/dev/null; then
+    exit
+fi
+echo $$ > "$PIDFILE"
 
 log() { echo "$(date '+%F %T') [healthcheck] $1" >> "$MAIN_LOG"; }
 
@@ -63,6 +82,9 @@ notify() {
 [ -n "$max_restart" ]     || max_restart=2       # 一個故障週期內最多重啟幾次，避免上游長期不可達時反覆重啟空轉
 [ -n "$start_delay" ]     || start_delay=90      # 開機初期網路還沒就緒，先穩定一下再開始判定
 [ -n "$redir_port" ]      || redir_port=5591
+[ -n "$poison_check" ]    || poison_check=1      # 投毒判定總開關；想關掉設 0（只影響誠實性檢查，重啟邏輯不受波及）
+[ -n "$poison_wait" ]     || poison_wait=5       # 誠實性檢查等回覆秒數：投毒是鏈路在途注入、回得飞快（0.x 秒級），5s 綽綽有餘；真答案偶爾慢過這個上限只會被判「無法判定」而不是投毒——寧可漏判也不亂扣帽子，更不會觸發重啟
+[ -n "$poison_threshold" ] || poison_threshold=2 # 累計幾輪假回覆才定罪投毒：單發一次假 IP 可能是快取/anycast 邊界，要兩次獨立證據才報，避免驚呼狼來了
 
 # AGH 實際監聽的 DNS 埠以配置檔為準（iptables.sh 用的 redir_port 只是備援）
 dns_port() {
@@ -91,7 +113,8 @@ no_network() {
     return 0
 }
 
-# 單次探測：回 0=上游有答覆、1=沒答覆(死)、2=回覆無效（不能據此判活）
+# 通用發送器：呼叫端先把查詢封包寫進 $PKT_FILE，並設好全域 t0／wait_budget／want_id；
+# 回覆 hex 存入全域 resp，probe_cost 記這一發耗時。回 0=拿到 ID 相符的回覆、1=沒回覆或 ID 不符。
 #
 # 為什麼是「寫檔＋輪詢＋自己殺 nc」而不是 `printf | nc | ...` 一條管線：
 # 1) 命令代換會等管線裡「所有」行程結束，而 toybox nc 收到一個 UDP 回覆後並不會收工，
@@ -100,20 +123,13 @@ no_network() {
 #    管線版有一發拿到 0 位元組），漏讀就等於憑空報死；
 # 3) 回覆先落地成檔案，輪詢到檔案非空即判定（健康時延遲回到 ~0.4s），然後直接殺掉 nc——
 #    等回覆的時間由這個輪詢上限控制，不靠 nc 的 -w（實測它不會自己退場，見下方註解）。
-# 封包先 printf 進暫存檔，是因為命令代換存不下 DNS 封包裡的 NUL 位元組。
-probe_once() {
-    tag=$(head -c 4 /dev/urandom 2>/dev/null | xxd -p | tr -d ' \n\r')
-    [ "${#tag}" -ge 8 ] || return 2
-    t0=$(date +%s)
-    # 封包：ID=0x1337 RD=1 QDCOUNT=1 ＋ "\016probe-<8hex>"(14) "\023invalid-healthcheck"(19)
-    # "\007example"(7) 根標籤 ＋ QTYPE=A QCLASS=IN，共 60 位元組
-    printf '\023\067\001\000\000\001\000\000\000\000\000\000\016probe-%s\023invalid-healthcheck\007example\000\000\001\000\001' "$tag" > "$PKT_FILE" || return 2
+run_probe() {
     : > "$ANS_FILE"
     nc -u 127.0.0.1 "$port" < "$PKT_FILE" > "$ANS_FILE" 2>/dev/null &
     ncpid=$!
     # 用時鐘截止而不是「睡 0.1 秒 × N 次」計數：裝置上每起一個 sleep 行程都有可觀開銷，
     # 實測 150 次迴圈會飄到 18s（比 probe_wait 還久），改成看牆鐘才不會越等越久。
-    deadline=$(( $(date +%s) + probe_wait ))
+    deadline=$(( t0 + wait_budget ))
     while [ "$(date +%s)" -lt "$deadline" ]; do
         sleep 0.1
         [ -s "$ANS_FILE" ] && break
@@ -126,18 +142,81 @@ probe_once() {
     kill -9 "$ncpid" 2>/dev/null
     wait "$ncpid" 2>/dev/null
     probe_cost=$(( $(date +%s) - t0 ))
-    # 回覆至少要有 header(12B)=24 個 hex 字元
+    # 回覆至少要有 header(12B)=24 個 hex 字元；前 4 個 hex 是查詢 ID
     [ "${#resp}" -ge 24 ] || return 1
-    # 前 4 個 hex 是查詢 ID，第 8 個 hex 是 RCODE 的低 4 位元
-    [ "$(printf '%s' "$resp" | cut -c1-4)" = "1337" ] || return 1
+    [ "$want_id" = "$(printf '%s' "$resp" | cut -c1-4)" ] || return 1
+    return 0
+}
+
+# 單次存活探測：回 0=上游有答覆、1=沒答覆(死)、2=回覆無效（不能據此判活）
+# 封包先 printf 進暫存檔，是因為命令代換存不下 DNS 封包裡的 NUL 位元組。
+probe_once() {
+    tag=$(head -c 4 /dev/urandom 2>/dev/null | xxd -p | tr -d ' \n\r')
+    [ "${#tag}" -ge 8 ] || return 2
+    t0=$(date +%s)
+    # 封包：ID=0x1337 RD=1 QDCOUNT=1 ＋ "\016probe-<8hex>"(14) "\023invalid-healthcheck"(19)
+    # "\007example"(7) 根標籤 ＋ QTYPE=A QCLASS=IN，共 60 位元組
+    printf '\023\067\001\000\000\001\000\000\000\000\000\000\016probe-%s\023invalid-healthcheck\007example\000\000\001\000\001' "$tag" > "$PKT_FILE" || return 2
+    wait_budget="$probe_wait"
+    want_id="1337"
+    run_probe || return 1
     # RDATA=0.0.0.0（rdlength 0004 + 00000000）＝AGH 自己的黑名單預設應答，這種回覆不能證明上游活著
     case "$resp" in
         *000400000000*) return 2 ;;
     esac
+    # 第 8 個 hex 是 RCODE 的低 4 位元
     case "$(printf '%s' "$resp" | cut -c8)" in
         0|3) return 0 ;;
         *)   return 1 ;;
     esac
+}
+
+# 八位 hex → 點分四段（toybox/GNU printf 都吃 0x 常數，不用 bashism 的字串切片）
+ipdot() {
+    h="$1"
+    printf '%d.%d.%d.%d' \
+        "0x$(printf '%s' "$h" | cut -c1-2)" "0x$(printf '%s' "$h" | cut -c3-4)" \
+        "0x$(printf '%s' "$h" | cut -c5-6)" "0x$(printf '%s' "$h" | cut -c7-8)"
+}
+
+# 誠實性檢查（投毒判定）：問 dns.google 的 A 記錄。它是 Google 自己的域，誠實上游
+# 一定回 8.8.8.8/8.8.4.4（這組合從 2016 年用到現在沒變過，比 142.251.x 那類會隨
+# Google 調度的 anycast 網段更好當基準）；它不在黑名單裡，也不吃「隨機子域快取永不
+# 命中」那套——回什麼就代表上游鏈路給了什麼。境內在途注入的特徵是「飛快回一個境內
+# 假 IP」（實測假值 157.240.7.20、185.45.5.35，AAAA 常見 2001::1，這裡只問 A）。
+# 回傳：0=誠實；1=假 IP（投毒證據）；2=無法判定（沒回覆／0.0.0.0 本地封應答／無 A
+# 記錄——不據此定罪，死活交給存活探測判）；3=對既存域名給權威負面應答（NXDOMAIN/
+# SERVFAIL/REFUSED）——正常解析器不會對 dns.google 這樣答，同樣算投毒證據。
+# 定罪後**不重啟**：投毒發生在鏈路／上游端，重啟 AGH 救不了，狂重啟只會更糟。
+probe_honesty() {
+    # 封包：ID=0x1338 RD=1 QDCOUNT=1 ＋ "\003dns" "\006google" 根標籤 ＋ QTYPE=A QCLASS=IN
+    printf '\023\070\001\000\000\001\000\000\000\000\000\000\003dns\006google\000\000\001\000\001' > "$PKT_FILE" || return 2
+    t0=$(date +%s)
+    wait_budget="$poison_wait"
+    want_id="1338"
+    run_probe || return 2
+    case "$resp" in
+        *000400000000*)
+            honest_detail="回覆 0.0.0.0＝本地過濾規則攔了 dns.google（不是投毒證據，請檢查規則）"
+            return 2 ;;
+    esac
+    rc4=$(printf '%s' "$resp" | cut -c8)
+    case "$rc4" in
+        0) ;;
+        2|3|5) honest_detail="rcode=$rc4：dns.google 不該收到權威負面應答"; return 3 ;;
+        *) honest_detail="rcode=$rc4 無法歸類"; return 2 ;;
+    esac
+    # A 記錄 RDATA：TYPE(0001)+CLASS(0001)+TTL(8hex)+RDLENGTH(0004)+IP(8hex)。
+    # 問題段結尾的 "00010001" 後面沒有 TTL/RDLENGTH/IP 可配，不會誤配。
+    ips=$(printf '%s' "$resp" | grep -oE '00010001[0-9a-f]{8}0004[0-9a-f]{8}' | sed 's/^00010001[0-9a-f]\{8\}0004//')
+    [ -n "$ips" ] || { honest_detail="NOERROR 但沒有可解析的 A 記錄（可能只有 CNAME）"; return 2; }
+    for ip in $ips; do
+        case "$ip" in
+            08080808|08080404) ;;
+            *) honest_detail="$(ipdot "$ip")（預期 8.8.8.8/8.8.4.4，hex 原值 $ip）"; return 1 ;;
+        esac
+    done
+    return 0
 }
 
 # 一輪探測：連發 probe_attempts 個隨機名稱，只要有一發拿到上游答覆這輪就算活。
@@ -190,12 +269,21 @@ gave_up=0
 notified=0
 skip_logged=0
 invalid_logged=0
+poison_fails=0
+poison_active=0
+poison_notified=0
 probe_cost=0
 round_cost=0
+# run_probe 的介面變數（探測回覆 hex／判定明細）
+t0=0
+wait_budget=0
+want_id=""
+resp=""
+honest_detail=""
 
 sleep "$start_delay"
 port=$(dns_port)
-log "上游探測啟動（目標 127.0.0.1:$port，單發等 ${probe_wait}s，一連 $probe_attempts 發任一有答即算健康，連續 $fail_threshold 輪失敗才重啟，一輪故障最多重啟 $max_restart 次，間隔 ${probe_interval}s）"
+log "上游探測啟動（目標 127.0.0.1:$port，單發等 ${probe_wait}s，一連 $probe_attempts 發任一有答即算健康，連續 $fail_threshold 輪失敗才重啟，一輪故障最多重啟 $max_restart 次，間隔 ${probe_interval}s，投毒判定 $poison_check（dns.google 誠實性檢查，累計 $poison_threshold 輪假回覆只通知不重啟））"
 
 while :; do
     # config.prop 可能在運行中被改（例如換劫持埠）
@@ -207,6 +295,9 @@ while :; do
     [ -n "$retry_gap" ]      || retry_gap=45
     [ -n "$fail_threshold" ] || fail_threshold=3
     [ -n "$max_restart" ]    || max_restart=2
+    [ -n "$poison_check" ]   || poison_check=1
+    [ -n "$poison_wait" ]    || poison_wait=5
+    [ -n "$poison_threshold" ] || poison_threshold=2
     port=$(dns_port)
 
     if no_network; then
@@ -219,7 +310,40 @@ while :; do
     rc=$?
 
     if [ "$rc" -eq 0 ]; then
-        # 上游有答覆（NOERROR／NXDOMAIN）；只在「剛從故障裡走出來」時留一行，健康時完全不寫日誌
+        # 上游有答覆≠答覆誠實。存活之後補一發誠實性檢查：境內注入會「秒回假 IP」，
+        # 這種情況重啟完全救不了（鍋在鏈路／上游端），所以只記日誌＋整段投毒只通知
+        # 一次，並**跳過下面的重新武裝**——投毒中的「有回應」不能拿來證明上游健康。
+        if [ "$poison_check" -eq 1 ]; then
+            probe_honesty
+            hc=$?
+            if [ "$hc" -eq 1 ] || [ "$hc" -eq 3 ]; then
+                poison_fails=$((poison_fails + 1))
+                # 定罪前逐輪留痕（要看得見累積過程）；定罪之後轉靜默低頻複查，
+                # 免得長期投毒把 agh.log 刷爆——通知本身已由 poison_notified 鎖成一次。
+                if [ "$poison_fails" -le "$poison_threshold" ]; then
+                    log "HC_POISON $poison_fails/$poison_threshold dns.google 回覆異常：$honest_detail——投毒是鏈路／上游的鍋，重啟無效，不重啟"
+                fi
+                if [ "$poison_fails" -ge "$poison_threshold" ] && [ "$poison_active" -eq 0 ]; then
+                    poison_active=1
+                    if [ "$poison_notified" -eq 0 ]; then
+                        notify "上游 DNS 回覆疑遭投毒（$honest_detail）。重啟無法解決，請檢查線路／上游。詳見 agh.log" "AGH 上游投毒疑慮"
+                        poison_notified=1
+                    fi
+                fi
+                sleep "$probe_interval"
+                continue
+            fi
+            if [ "$hc" -eq 0 ] && [ "$poison_active" -eq 1 ]; then
+                log "上游回覆恢復誠實（投毒警報解除，此前累計可疑 $poison_fails 輪），計數歸零、重新武裝"
+            fi
+            if [ "$hc" -eq 0 ]; then
+                poison_fails=0
+                poison_active=0
+                poison_notified=0
+            fi
+            # hc=2（無法判定）不動計數：一發沒回或本地 0.0.0.0 既不能定罪也不能平反
+        fi
+        # 上游有答覆（NOERROR／NXDOMAIN）且誠實性檢查通過；只在「剛從故障裡走出來」時留一行，健康時完全不寫日誌
         if [ "$fails" -gt 0 ] || [ "$gave_up" -eq 1 ] || [ "$notified" -eq 1 ]; then
             log "上游已恢復應答（本故障週期累計失敗 $fails 輪、自動重啟 $restarts 次），計數歸零、重新武裝"
         fi
