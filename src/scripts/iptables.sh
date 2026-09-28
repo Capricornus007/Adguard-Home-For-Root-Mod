@@ -4,7 +4,8 @@
 # twoone-3 issue #71 的教訓）、DoT(853) 阻斷（防系統私下繞過 AGH 走加密 DNS）。
 # 免死金牌只給 AGH 進程自己（按 uid 認 root）——它的上游查詢不能被劫持回自己。
 # 帶 5 秒守護循環：進程掉了重啟、規則被刷掉了重建（VPN 啟停會沖掉 nat 規則）。
-AGH_DIR="/data/adb/agh"
+# 允許環境變數改根目錄僅供 /tmp 沙箱演練用；設備上沒人設，走預設絕對路徑。
+AGH_DIR="${AGH_DIR:-/data/adb/agh}"
 . "$AGH_DIR/scripts/config.prop" 2>/dev/null || {
     redir_port=5591
     adg_user=root
@@ -16,8 +17,18 @@ IP6T="ip6tables -w 5"
 
 log() { echo "$(date '+%F %T') [iptables] $1" >> "$MAIN_LOG"; }
 
-# 防止重複啟動
-[ "$(pgrep -f "$0" | wc -l)" -gt 1 ] && exit
+# 防止重複啟動：pidfile ＋ /proc/<pid>/cmdline 驗證（同 healthcheck.sh 那套模式）。
+# 舊寫法 `[ "$(pgrep -f "$0"|wc -l)" -gt 1 ] && exit` 已被實測證明會自傷：命令代換
+# 會派生一個 cmdline 與本腳本一模一樣、但 PID 不同的子 shell，把自己數成兩個 →
+# 連第一實例都秒退，這支常駐循環從沒真正跑起來過。改 pidfile 後：
+#   本腳本把守護循環用 `done &` 丟背景、父進程随即退出，所以不能記父 $$（父一死檔裡
+#   就是死 pid），改記背景循環的 $!（見檔案末尾）；另加 /proc/<pid>/cmdline 認 iptables.sh，
+#   舊 PID 被複用也不會擋死新實例。此處只做「有無活循環」的讀取檢查。
+PIDFILE="$AGH_DIR/iptables.pid"
+oldpid=$(cat "$PIDFILE" 2>/dev/null)
+if [ -n "$oldpid" ] && grep -q "iptables.sh" "/proc/$oldpid/cmdline" 2>/dev/null; then
+    exit
+fi
 
 setup_rules() {
     # AGH 掉進程則先拉起（-w 固定 workdir，否則它會跟著 cwd 跑進「首次安裝向導」狀態）
@@ -90,3 +101,7 @@ while true; do
     fi
     sleep 5
 done &
+
+# 記下「活著的守護循環」PID 給上面的守門比對：done & 之後 $! 就是這個背景子 shell，
+# 父進程寫完即退、循環子 shell 繼續常駐，cmdline 仍是 .../iptables.sh（fork 繼承 argv）。
+echo "$!" > "$PIDFILE"
