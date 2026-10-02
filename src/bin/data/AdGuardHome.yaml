@@ -1996,6 +1996,17 @@ user_rules:
   - '||cdn.jwplayer.com^$important'
   - '||metrics.icloud.com^$important'
   - "@@||pureapk.com^$important"
+  - '#针对三国志战略版的误杀放行规则'
+  - '@@||lingxigames.com^$important'
+  - '@@||aligames.com^$important'
+  - '#针对淘宝闪购商家零售版放行规则'
+  - '@@||nracc.ele.me^$important'
+  - '#针对决胜巅峰的误杀放行规则'
+  - '@@||ad.moonton.cn^$important'
+  - '@@||tapapis.cn^$important'
+  - '@@||log.dailygn.com^$important'
+  - '#小米应用安装器的放行规则'
+  - '@@||api.installer.xiaomi.com^$important'
 dhcp:
   enabled: false
   interface_name: ""
