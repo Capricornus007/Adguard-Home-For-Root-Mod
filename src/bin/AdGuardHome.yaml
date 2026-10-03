@@ -134,7 +134,7 @@ filters:
     name: Divested Hosts
     id: 1795500002
   - enabled: true
-    url: https://raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/dns.txt
+    url: https://ghfast.top/raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/dns.txt
     name: GOODBYEADS
     id: 1721861846
   - enabled: true
@@ -191,7 +191,7 @@ filters:
     id: 1771814664
 whitelist_filters:
   - enabled: true
-    url: https://raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/allow.txt
+    url: https://ghfast.top/raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/allow.txt
     name: GOODBYEADS
     id: 1721861844
   - enabled: true
@@ -454,7 +454,6 @@ user_rules:
   - '||longlingsc.art^$important'
   - '||qhj0u.com^$important'
   - '||wedbccid.top^$important'
-  - '||qbb6.com^$important'
   - '||xbfxs6.com^$important'
   - '||noi107.com^$important'
   - '||tquzifwb.com^$important'
@@ -913,7 +912,7 @@ user_rules:
   - '#拦截HTTPDNS相关域名链接'
   - '||hdns.ksyun.com$important'
   - '||apidns.kwd.inkuai.com^$important'
-  - '||httpdns.*^$important'
+  - '||*httpdns.*^$important'
   - '||dns*.weixin.qq.*^$important'
   - '||dns.qq.com^$important'
   - '||*dns.weixin.qq.*^$important'
@@ -927,15 +926,28 @@ user_rules:
   - '||dot.api.idmzj.com^$important'
   - '||doh.iqiyi.com^$important'
   - '||paydns.wechatpay.cn^$important'
+  - '||doh.qq.com^$important'
+  - '||dot.qq.com^$important'
+  - '||dns.taobao.com^$important'
+  - '||dns.tmall.com^$important'
+  - '||dns.pinduoduo.com^$important'
+  - '||dns.bytedance.com^$important'
+  - '||dns.toutiao.com^$important'
+  - '||dns.kuaishou.com^$important'
+  - '||dns.360.cn^$important'
+  - '||dns.sina.com.cn^$important'
+  - '||dns.sohu.com^$important'
+  - '||dns.163.com^$important'
+  - '||dns.yy.com^$important'
+  - '||dig.zjurl.cn^$important'
+  - '||dns2.q2cdn.com^$important'
   - '#针对网易云音乐的广告拦截规则'
   - '||nstool.netease.com^$important'
   - '||ssp-landing.taptap.cn^$important'
   - '||site.u-mob.cn^$important'
-  - '||mos.m.taobao.com^$important'
   - '||pages-fast.m.taobao.com^$important'
   - '||market.m.taobao.com^$important'
   - '||pages.goofish.com^$important'
-  - '||mo.m.taobao.com^$important'
   - '||lp.pinduoduo.com^$important'
   - '||i.meituan.com^$important'
   - '||conf-darwin.xycdn.com^$important'
@@ -1073,6 +1085,9 @@ user_rules:
   - '||atrace.chelaile.net.cn^$important'
   - '||cdn.smartimg.chelaile.net.cn^$important'
   - '#针对部分小众广告联盟的规则'
+  - '||lf*-data.volccdn.com^$important'
+  - '||irs03.com^$important'
+  - '||lighthouseapi3.dmall.com^$important'
   - '||adn.tapapis.cn^$important'
   - '||yourongsj.com^$important'
   - '||halomobi.com^$important'
@@ -1173,9 +1188,6 @@ user_rules:
   - '||gameresource.itop.qq.com^$important'
   - '||*-cdnfile*pcdn.msstatic.com^$important'
   - '||hydlpcdn.cdn.huya.com^$important'
-  - '#中国移动云盘的广告拦截规则'
-  - '||lf*-data.volccdn.com^$important'
-  - '||irs03.com^$important'
   - '#针对墨迹天气的广告拦截规则'
   - '||reachmax.cn^$important'
   - '||logd.api.moji.com^$important'
@@ -1231,8 +1243,6 @@ user_rules:
   - '||imageads.codoon.com^$important'
   - '||adsdkapi.dxys.pro^$important'
   - '||tobidad.*^$important'
-  - '#针对抖音App的放行规则'
-  - '@@||dig.bdurl.net^$important'
   - '#针对斗鱼直播的广告拦截规则'
   - '||rtbapi.douyucdn.cn^$important'
   - '#拦截小米智能服务系统级广告'
@@ -1382,7 +1392,6 @@ user_rules:
   - '@@||xn--vhq3x51dn9bivas49nfps.com^$important'
   - '#针对萤石云视频的广告拦截规则'
   - '||ad-material.*.com^$important'
-  - '||sdk-ab-config-cdn.yunxish.com^$important'
   - '||appdownload.ys7.com^$important'
   - '#针对123网盘App跳转误杀放行规则'
   - '@@||c.umsns.com^$important'
@@ -1422,6 +1431,16 @@ user_rules:
   - '||cdn*-ads.redmagic.com^$important'
   - '#针对滴滴出行车主服务误杀放行规则'
   - '@@||adtrack.xiaojukeji.com^$important'
+  - '#针对小米移动的误杀放行规则'
+  - '@@||apm-rum.inf.miui.com^$important'
+  - '#针对搜狗输入法的误杀放行规则'
+  - '@@input.shouji.sogou.com^$important'
+  - '#针对手心输入法的误杀放行规则'
+  - '@@shouji.360.cn^$important'
+  - '#针对淘宝联盟App的误杀放行规则'
+  - '@@||audid-api.taobao.com^$important'
+  - '#淘宝闪购e起赚小程序误杀放行规则'
+  - '@@||shopping.ele.me^$important'
   - '#针对顺丰同城骑士的误杀放行规则'
   - '@@||locprivate-tostc.sf-express.com^$important'
   - '#中山市智慧排水平台误杀放行规则'
@@ -1950,6 +1969,25 @@ user_rules:
   - '||taiteemozathou.com^$client=''192.168.0.101'''
   - '@@||*.no-mad-world.club^important'
   - '@@||s.youtube.com^'
+  - '#针对淘宝App开屏的广告拦截规则'
+  - '||midea-file.oss-cn-hangzhou.aliyuncs.com^$important'
+  - '||alibaba-cn-pvg-00001.oss-enet.aliyuncs.com^$important'
+  - '#针对掌上莲峰开屏的广告拦截规则'
+  - '||dcloud.net.cn^$important'
+  - '#针对三国志战略版的误杀放行规则'
+  - '@@||lingxigames.com^$important'
+  - '@@||aligames.com^$important'
+  - '#针对淘宝闪购商家零售版放行规则'
+  - '@@||nracc.ele.me^$important'
+  - '#针对决胜巅峰的误杀放行规则'
+  - '@@||ad.moonton.cn^$important'
+  - '@@||tapapis.cn^$important'
+  - '@@||log.dailygn.com^$important'
+  - '#阻断ECH公钥链接防止流量绕过'
+  - '||_https.*^$important'
+  - '||_svcb.*^$important'
+  - '#小米应用安装器的放行规则'
+  - '@@||api.installer.xiaomi.com^$important'
 dhcp:
   enabled: false
   interface_name: ""
@@ -1990,6 +2028,7 @@ filtering:
   rewrites: []
   safe_fs_patterns:
     - /data/adb/agh/bin/data/userfilters/*
+  max_http_size: 256MB
   safebrowsing_cache_size: 1048576
   safesearch_cache_size: 1048576
   parental_cache_size: 1048576

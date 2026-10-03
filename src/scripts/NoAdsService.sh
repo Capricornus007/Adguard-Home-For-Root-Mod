@@ -37,13 +37,15 @@ while :;do
     block_ad "/data/media/0/Android/data/tv.danmaku.bili/cache/default/journal"
     block_ad "/data/data/tv.danmaku.bili/files/splash2"
     block_ad "/data/data/tv.danmaku.bili/files/splash_top_view"
+    block_ad "/data/data/tv.danmaku.bili/files/resmanager_resource_1"
+    block_ad "/data/data/tv.danmaku.bili/files/resmanager_resource_2"
+    block_ad "/data/data/tv.danmaku.bili/files/resmanager_resource_3"
     
     # 中国广电
     block_ad "/data/data/com.ai.obc.cbn.app/files/splashShow"
     
     # 酷我音乐
     block_ad "/data/media/0/Android/data/cn.kuwo.player/files/KuwoMusic/.screenad"
-    block_ad "/data/data/cn.kuwo.player/app_adnet"
     block_ad "/data/media/0/Android/data/cn.kuwo.player/files/KuwoMusic/.ad"
     block_ad "/data/media/0/Android/data/cn.kuwo.kwmusichd/files/KwPlayerHD/.screenad"
     
@@ -198,14 +200,37 @@ while :;do
    # 中国银河证券
    block_ad "/data/data/com.galaxy.stock/files"
    
+   # 南方基金
+   block_ad "/data/media/0/Android/data/com.nanfangjijin.app/files/ad"
+   block_ad "/data/data/com.nanfangjijin.app/cache/image_manager_disk_cache"
+   
+   # 银华利生宝
+   block_ad "/data/data/com.ihandy.fund/cache/image_manager_disk_cache"
+   block_ad "/data/media/0/Android/data/com.ihandy.fund/cache/download/splash"
+   
+   # 中国移动云盘
+   block_ad "/data/media/0/Android/data/com.chinamobile.mcloud/files/M_Cloud/temp/bigcloudimage"
+   block_ad "/data/media/0/Android/data/com.chinamobile.mcloud/files/boot_logo"
+   
+   # 建信基金
+   block_ad "/data/data/com.ccb.zzb.activity/files/image"
+   
+   # 清空锁定IFW文件夹
+   block_ad "/data/system/ifw"
+   
+   # 大学搜题酱
+   block_ad "/data/media/0/Android/data/com.zmzx.college.search/cache/glide"
+   
+   # 汽水音乐
+   block_ad "/data/media/0/com.luna.music/cache/image_commercial_cache"
+   block_ad "/data/media/0/com.luna.music/cache/pangle_com.byted.pangle"
+   block_ad "/data/media/0/com.luna.music/files/splashCache"
+   
 # 广告过滤核心：一次 lsattr 批次查所有已存在路径，只对没锁的做 rm/chattr（大减常駐迴圈 I/O）
 [ -n "$e" ]&&lsattr -d $e|while read -r a p;do case "$a" in *i*)continue;;esac;[ -d "$p" ]&&(rm -rf "$p"&&mkdir -p "$p")&&chattr +i "$p"&&continue;[ -f "$p" ]&&> "$p"&&chattr +i "$p";done
 
 # 自动关闭私人DNS
 [ "$(settings get global private_dns_mode)" = "off" ] || settings put global private_dns_mode off
-
-# 自动清空IFW文件夹
-[ -d "/data/system/ifw" ]&&for f in /data/system/ifw/*;do [ -e "$f" ]&&rm -rf /data/system/ifw/*&&break;done
 
 # 专清/data/data卸载残留
 for d in /data/data/*==deleted==;do [ -d "$d" ]&&chattr -R -i "$d"&&rm -rf "$d";done
