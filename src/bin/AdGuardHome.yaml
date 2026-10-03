@@ -134,7 +134,7 @@ filters:
     name: Divested Hosts
     id: 1795500002
   - enabled: true
-    url: https://ghfast.top/raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/dns.txt
+    url: https://raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/dns.txt
     name: GOODBYEADS
     id: 1721861846
   - enabled: true
@@ -191,7 +191,7 @@ filters:
     id: 1771814664
 whitelist_filters:
   - enabled: true
-    url: https://ghfast.top/raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/allow.txt
+    url: https://raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/allow.txt
     name: GOODBYEADS
     id: 1721861844
   - enabled: true
