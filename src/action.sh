@@ -1,7 +1,9 @@
 #!/system/bin/sh
 AGH_DIR="/data/adb/agh"
 BIN_DIR="$AGH_DIR/bin"
-YAML_FILE="$BIN_DIR/AdGuardHome.yaml"
+# 實際生效的配置是 bin/data/AdGuardHome.yaml（service.sh 以 bin/data 為 cwd）；
+# 讀 bin/AdGuardHome.yaml 會拿到一份沒人用的舊檔，端口因此取錯。
+YAML_FILE="$BIN_DIR/data/AdGuardHome.yaml"
 
 echo "等待 1 秒..."
 echo "刷新页面以查看更改。"

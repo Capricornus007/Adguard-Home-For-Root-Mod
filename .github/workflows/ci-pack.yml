@@ -105,6 +105,15 @@ jobs:
           pattern: AdGuardHomeForRoot_*
           merge-multiple: true
 
+      - name: Stage release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          # body_path 指的檔案必須真的存在，否則 action-gh-release 帶著「檔案找不到」的警告上線、
+          # 發布說明變空。這裡只寫一行指針，完整歷史看倉庫提交。
+          printf '打包自 %s：%s\n' "$(git rev-parse --short HEAD)" "$(git log -1 --pretty=%s)" > changelog.md
+          cat changelog.md
+
       - name: Create release
         uses: softprops/action-gh-release@v3
         with:
