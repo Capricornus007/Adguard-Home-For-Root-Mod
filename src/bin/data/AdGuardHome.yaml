@@ -90,7 +90,18 @@ dns:
   cache_optimistic_answer_ttl: 30s
   cache_optimistic_max_age: 1h
   bogus_nxdomain: []
-  aaaa_disabled: false
+  # ── 2026-10-26：停用 AAAA 回覆（實機驗證）──────────────────────────────
+  # 症狀：手機實體網卡的 IPv6 完全正常（taobao v6 30ms 比 v4 42ms 還快），
+  #   但一進 VPN 隧道就死：TCP 能建、TLS 握手到 Server Hello 就卡死，
+  #   curl 預設先試 IPv6 → 10 秒超時吃光 → 根本輪不到 IPv4。
+  #   結果是「境內站點看起來超慢、偶發直接失敗」。
+  # 根因：tun 一律下發 v6 位址與路由（防繞過代理外洩，見 VpnService.establishTun），
+  #   但節點不轉發 IPv6 出站，封包進去就是黑洞；MTU 1280 + v6 不分片讓它更難自癒。
+  # 修法：AGH 不再回 AAAA，應用拿不到 v6 位址就不會去試，直接走 IPv4。
+  #   境內域名全部經過 AGH，這一刀覆蓋面最廣、風險最低、可逆。
+  # 注意：舊的 AAAA 會被 cache_optimistic 反覆復活（空值不會覆蓋舊值），
+  #   改完必須重啟 AGH 清一次記憶體快取。
+  aaaa_disabled: true
   enable_dnssec: true
   edns_client_subnet:
     custom_ip: ""
