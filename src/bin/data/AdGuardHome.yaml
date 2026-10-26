@@ -95,9 +95,16 @@ dns:
   #   但一進 VPN 隧道就死：TCP 能建、TLS 握手到 Server Hello 就卡死，
   #   curl 預設先試 IPv6 → 10 秒超時吃光 → 根本輪不到 IPv4。
   #   結果是「境內站點看起來超慢、偶發直接失敗」。
-  # 根因：tun 一律下發 v6 位址與路由（防繞過代理外洩，見 VpnService.establishTun），
-  #   但節點不轉發 IPv6 出站，封包進去就是黑洞；MTU 1280 + v6 不分片讓它更難自癒。
-  # 修法：AGH 不再回 AAAA，應用拿不到 v6 位址就不會去試，直接走 IPv4。
+  # 根因：隧道本身的 IPv6 能力完全正常（curl -6 到 Cloudflare v6 直連 301/0.55s、
+  #   ss 能看到 5 條到 IPv6 節點的 ESTAB），但某些目標側的跨境 IPv6 路徑 MTU < 1280，
+  #   導致「小包能過、TLS 大包被丟」的 MTU 黑洞：HTTP 通、HTTPS 卡死。降 MTU 修不了
+  #   （1280 是 Android 給帶 v6 位址 tun 的硬下限，設更低直接起不來），TCPMSS 也無效
+  #   （tun 流量不走 netfilter）。應用層 Happy Eyeballs 只看 TCP 是否連上、不看 TLS
+  #   傳不傳得動，所以連得上的真實 v6 反而回退不了，10 秒超時吃光才輪到 v4。
+  # 修法：AGH 不再回 AAAA，境內域名拿不到 v6 位址就不會去試，直接走 IPv4；境外域名
+  #   走 fake-ip（fc00::/18），連不上快速失敗、curl 自動回退 v4。兩條路都避開黑洞。
+  #   注意：「不要動 ipv6Mode」——v6 能力必須全留，純 v6 節點、真實 v6 目標都靠它。
+  #   改完必須重啟 AGH 清一次快取（cache_optimistic 會反覆復活舊 AAAA，空值不覆蓋舊值）。
   #   境內域名全部經過 AGH，這一刀覆蓋面最廣、風險最低、可逆。
   # 注意：舊的 AAAA 會被 cache_optimistic 反覆復活（空值不會覆蓋舊值），
   #   改完必須重啟 AGH 清一次記憶體快取。
