@@ -41,19 +41,27 @@ dns:
     # 注意：AGH v0.108.0-b.90 沒有 use_most_specific_servers，load_balance 是「所有適用上游
     #   賽跑、誰先回用誰」，所以 `#域名` 釘選不具排他性——只要境內上游還在池裡就會抢答，
     #   要修就得把它們整條移出，而不是加釘選。
-    - https://dns.sb/dns-query
+    # ── 2026-10-26：dns.sb 從域名形改成純 IP 形（實機驗證）────────────────────
+    # 症狀：上游寫 `https://dns.sb/dns-query`（域名形）時，境外域名會被解析到
+    #   Twitter / Facebook 網段（youtube.com → 104.244.42.197、wikipedia.org → 31.13.94.49），
+    #   也就是「上游自己在撒謊」。根因是域名形上游要先靠 bootstrap 解析自己的主機名，
+    #   這一步的答案不受 DoH 的 TLS 保護；load_balance 又是「誰先回用誰」，假答案就勝出了。
+    # 修法：直接用 dns.sb 的官方 IP（45.11.45.11 / 185.222.222.222），跳過 bootstrap 解析。
+    # 實測（app uid，不是 shell——shell 的 uid 2000 不在 VPN 的 UID 清單裡，測不到真路徑）：
+    #   youtube.com → 198.18.x（fakeip，節點側實名解析）
+    #   baidu.com   → 111.63.65.103（真實 IP，境內走 dns-direct）
+    #   doubleclick.net → 0.0.0.0（過濾生效）
+    - https://45.11.45.11/dns-query
+    - https://185.222.222.222/dns-query
     - https://8.8.8.8/dns-query
     - https://1.1.1.1/dns-query
   upstream_dns_file: ""
-  # 2026-09-22：清空。上游全是 IP 形、不需要 bootstrap 解析主機名；
-  # 留著明文 UDP 的 bootstrap 只會多出一條可被路徑注入假 IP 的出口。
-      # 2026-09-22：清空。上游全是 IP 形、不需 bootstrap 解析；留明文 UDP 只會多一條可被注入的出口
-  # bootstrap 只用於「解析上游主機名」，與答案取信無關：
-  #   - 放境內解析器是安全的：DoH 仍會驗證 dns.sb 的 TLS 憑證，偽造 IP 拿不到有效憑證。
-  #   - 但**不能清空**：https://dns.sb/dns-query 是域名形上游，無 bootstrap 時 AGH 會退化成
-  #     「拿 dns.sb 去解析 dns.sb 自己」→ 每次 20 秒超時（2026-09-23 在實機踩到，youtube 首查 10.2s）。
-  #   - 選 223.5.5.5/119.29.29.29 是因為它們在模組 iptables 的 ignore_dest_list 內（不被 53 劫持）、
-  #     且境內直連可達；經隧道的 1.1.1.1:53/8.8.8.8:53 明文 UDP 常被節點不放行。
+  # bootstrap 只用於「解析上游主機名」，與答案取信無關。
+  # 2026-10-26 起上游全是純 IP 形，bootstrap 實際上不再被使用；保留它只是為了
+  # 以後若再加域名形上游時，不會退化成「拿 dns.sb 去解析 dns.sb 自己」的 20 秒超時
+  # （2026-09-23 在實機踩到，youtube 首查 10.2s）。
+  # 選 223.5.5.5/119.29.29.29 是因為它們在模組 iptables 的 ignore_dest_list 內（不被 53 劫持）、
+  # 且境內直連可達；經隧道的 1.1.1.1:53/8.8.8.8:53 明文 UDP 常被節點不放行。
   bootstrap_dns:
     - 223.5.5.5
     - 119.29.29.29
